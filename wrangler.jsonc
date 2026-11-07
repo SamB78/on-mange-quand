@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "on-mange-quand",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-01",
+  // La page (public/) est servie telle quelle ; les adresses /api/* passent par le serveur.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "on-mange-quand",
+      "database_id": "3d125fa7-ac16-4ba9-ae7b-c427c40fe56d",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}

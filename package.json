@@ -1,0 +1,13 @@
+{
+  "name": "on-mange-quand",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply on-mange-quand --local",
+    "db:remote": "wrangler d1 migrations apply on-mange-quand --remote"
+  },
+  "devDependencies": {
+    "wrangler": "4.152.0"
+  }
+}

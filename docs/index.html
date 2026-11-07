@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>On mange quand ?</title>
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://on-mange-quand.on-mange-quand.workers.dev/">
+<script>
+  // Ancienne adresse : on renvoie vers la nouvelle, sauf pour un lien de sondage de l'ancienne version.
+  (function () {
+    if (/^#[zj]1-/.test(location.hash)) { document.documentElement.className = 'old'; return; }
+    location.replace('https://on-mange-quand.on-mange-quand.workers.dev/');
+  })();
+</script>
+<style>
+  :root { --bg: #F3F5F8; --fg: #18202E; --muted: #5A6476; --accent: #2A52BE; --accent-ink: #FFFFFF; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0F131A; --fg: #E7EBF2; --muted: #9AA4B5; --accent: #87A4FF; --accent-ink: #0D1530; color-scheme: dark; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 32rem; margin: 0 auto; padding: 48px 16px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-family: Georgia, serif; font-weight: 400; font-size: 2rem; margin: 0; }
+  p { margin: 0; color: var(--muted); }
+  a { color: var(--accent); font-weight: 600; }
+  .btn { align-self: flex-start; background: var(--accent); color: var(--accent-ink); text-decoration: none; padding: 12px 18px; border-radius: 10px; }
+  .oldmsg { display: none; flex-direction: column; gap: 14px; }
+  .old .oldmsg { display: flex; }
+  .old .moved { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>On mange quand&nbsp;?</h1>
+  <p class="moved">L’app a déménagé&nbsp;: <a href="https://on-mange-quand.on-mange-quand.workers.dev/">on-mange-quand.on-mange-quand.workers.dev</a></p>
+  <div class="oldmsg">
+    <p>Ce lien vient de l’ancienne version de l’app. Le sondage est toujours lisible.</p>
+    <a class="btn" id="open-old" href="ancienne-version/">Ouvrir ce sondage</a>
+    <p>Pour un nouveau sondage, utilisez la <a href="https://on-mange-quand.on-mange-quand.workers.dev/">nouvelle version</a>&nbsp;: un seul lien pour tout le groupe.</p>
+  </div>
+</main>
+<script>
+  document.getElementById('open-old').href = 'ancienne-version/' + location.hash;
+</script>
+</body>
+</html>
