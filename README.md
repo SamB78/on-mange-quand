@@ -35,7 +35,18 @@ Les sondages créés avant l'arrivée du lien organisateur n'ont pas d'organisat
 | `src/worker.js` | Le serveur : sert la page et l'API `/api/polls` |
 | `migrations/` | Structure de la base de données (Cloudflare D1) |
 | `wrangler.jsonc` | Configuration Cloudflare, prod et test |
+| `scripts/garde-fou-prod.mjs` | Bloque toute mise à jour de la prod en dehors de `main` |
 | `docs/` | Ancienne adresse GitHub Pages : renvoi vers la nouvelle, et l'ancienne version (sondage enregistré dans le lien) |
+
+## Branches
+
+| Branche | Rôle | En ligne sur |
+|---|---|---|
+| `main` | ce qui tourne en prod | la prod |
+| `develop` | les nouveautés réunies, avant la prod | la version de test |
+| `feature/…` | une nouveauté en cours, partie de `develop` | — |
+
+Une nouveauté part de `develop` sur sa propre branche, y revient une fois prête, et s'essaie sur la version de test. Pour passer en prod, on fusionne `develop` dans `main`.
 
 ## Tester sur son ordinateur
 
@@ -61,5 +72,7 @@ npx wrangler login
 npm run db:remote
 npm run deploy
 ```
+
+Depuis `main` uniquement, sans modification en cours : sinon le garde-fou arrête la commande avant qu'elle ne touche la prod. Passez toujours par `npm run …`, jamais directement par `npx wrangler deploy`, qui contourne le garde-fou.
 
 `wrangler login` ne sert qu'une fois par ordinateur. `db:remote` n'est utile que lorsqu'un nouveau fichier apparaît dans `migrations/`, et doit toujours passer **avant** `deploy` : le nouveau code lit des colonnes qui doivent déjà exister.
