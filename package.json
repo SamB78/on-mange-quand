@@ -5,7 +5,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 migrations apply on-mange-quand --local",
-    "db:remote": "wrangler d1 migrations apply on-mange-quand --remote"
+    "db:remote": "wrangler d1 migrations apply on-mange-quand --remote",
+    "db:test": "wrangler d1 migrations apply on-mange-quand-test --env test --remote",
+    "deploy:test": "wrangler deploy --env test"
   },
   "devDependencies": {
     "wrangler": "4.152.0"

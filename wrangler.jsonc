@@ -13,5 +13,19 @@
       "migrations_dir": "migrations"
     }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "env": {
+    // Version de test (--env test) : sa propre adresse et sa propre base, séparées de la prod.
+    "test": {
+      "name": "on-mange-quand-test",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "on-mange-quand-test",
+          "database_id": "4b6ab62f-9109-40ca-840b-b5d3ebe142ad",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }
