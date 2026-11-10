@@ -289,6 +289,14 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
 .sbtn.s2 .mk { border-color: var(--maybe); }
 .sbtn.s2 .mk::before { content: "~"; }
 @media (max-width: 440px) { .arow { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+/* Créneaux déjà pris (agenda Google, autres repas) : contour en pointillés rouges et petite mention */
+.sbtn .sl { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.2; text-align: left; }
+.sbtn .bz { font-size: 0.72rem; font-weight: 600; color: var(--danger); }
+.sbtn.busy.s0 { border-style: dashed; border-color: var(--danger); }
+.agenda-tools { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 0.88rem; color: var(--muted); }
+.agenda-tools:empty { display: none; }
+.agenda-tools .hint { flex-basis: 100%; font-size: 0.8rem; }
+.mini.gcal { display: inline-flex; align-items: center; gap: 6px; }
 .afoot {
   position: sticky; bottom: 0; z-index: 2;
   margin: 0 calc(-1 * var(--pad)) calc(-1 * var(--pad));
@@ -335,6 +343,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
 .notes li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; overflow-wrap: anywhere; }
 .notes .nn { font-weight: 700; margin-right: 6px; }
 .agenda { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--chalk-line); }
+.verdict a:not(.btn) { color: var(--chalk); }
 .org-badge { align-self: flex-start; font-size: 0.8rem; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 12px; }
 .card.org { border-style: dashed; border-color: var(--accent); }
 .who-name { font-weight: 700; color: var(--ink); display: inline-block; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
@@ -1107,7 +1116,196 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     if (ui.editing) return `La réponse de ${ui.editing} sera renommée « ${name.trim()} ».`;
     return '';
   }
-  function slotAria(sl, v) { return `${fmt(fLong, sl.d)}, ${MOMENTS[sl.t].toLowerCase()} : ${STATE_LABEL[v]}`; }
+  function slotAria(sl, v, i) {
+    const c = conflictOf(i);
+    return `${fmt(fLong, sl.d)}, ${MOMENTS[sl.t].toLowerCase()} : ${STATE_LABEL[v]}${c ? ` (déjà pris : ${c})` : ''}`;
+  }
+  const slotClass = (i, v) => 'sbtn s' + v + (conflictOf(i) ? ' busy' : '');
+  const slotLabelHTML = (i) => {
+    const c = conflictOf(i);
+    return MOMENTS[poll.slots[i].t] + (c ? `<small class="bz">${esc(c)}</small>` : '');
+  };
+
+  /* ---------- Créneaux déjà pris : agenda Google et autres repas du compte ---------- */
+  // Heure de Paris → instant, sans bibliothèque : on mesure le décalage de Paris à cet instant (heure d'été comprise).
+  const parisParts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  function parisOffset(ms) {
+    const p = {};
+    for (const x of parisParts.formatToParts(new Date(ms))) p[x.type] = +x.value;
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ms / 60000) * 60000;
+  }
+  function parisTime(d, hhmm) {
+    const local = d * DAY_MS + (+hhmm.slice(0, 2)) * 3600000 + (+hhmm.slice(2)) * 60000;
+    return local - parisOffset(local - parisOffset(local)); // deux passes : justes aussi autour des changements d'heure
+  }
+  const fParisHm = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const parisHm = (ms) => fParisHm.format(new Date(ms)).replace(/\D/g, '');
+  // Plage comparée à l'agenda : les horaires indicatifs du moment, ou 8 h – 23 h pour « Journée ».
+  function slotRange(sl) {
+    const h = MOMENT_HOURS[sl.t] || ['0800', '2300'];
+    return [parisTime(sl.d, h[0]), parisTime(sl.d, h[1])];
+  }
+  // « pris 20 h – 22 h 30 » si une plage occupée chevauche le créneau, sinon ''.
+  function busyLabel(sl, range, busy) {
+    const dayStart = parisTime(sl.d, '0000'), dayEnd = parisTime(sl.d + 1, '0000');
+    const hits = busy.filter(([s, e]) => s < range[1] && e > range[0]).map(([s, e]) => {
+      const a = Math.max(s, dayStart), b = Math.min(e, dayEnd);
+      if (a === dayStart && b === dayEnd) return 'toute la journée';
+      return `${hourLabel(parisHm(a))} – ${b === dayEnd ? 'minuit' : hourLabel(parisHm(b))}`;
+    });
+    if (!hits.length) return '';
+    return 'pris ' + (hits.includes('toute la journée') ? 'toute la journée' : hits.slice(0, 2).join(', ') + (hits.length > 2 ? '…' : ''));
+  }
+
+  // Comparaison avec l'agenda Google : client OAuth public du projet Firebase (vide = bouton masqué).
+  // Google ne renvoie que les plages occupées de l'agenda principal ; tout reste dans le navigateur.
+  // Côté Google Cloud : API Google Calendar activée, adresse du site dans les origines JavaScript autorisées du client.
+  const GOOGLE_CLIENT_ID = '704019232045-j9fb3sh6q6llg1ecm7qjrno34fecr7mb.apps.googleusercontent.com';
+  const FREEBUSY_SCOPE = 'https://www.googleapis.com/auth/calendar.freebusy';
+  let gisLoading = null;
+  // Le script de Google se charge à l'ouverture du formulaire : la fenêtre d'accord doit s'ouvrir dès le toucher du bouton.
+  function loadGis() {
+    if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+    if (!gisLoading) {
+      gisLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => { gisLoading = null; s.remove(); reject(new Error('Impossible de joindre Google. Vérifiez votre réseau et réessayez.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return gisLoading;
+  }
+  function googleToken() {
+    return new Promise((resolve, reject) => {
+      const fail = (msg, silent) => { const e = new Error(msg); e.silent = !!silent; reject(e); };
+      google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: FREEBUSY_SCOPE,
+        login_hint: (auth.user && auth.user.email) || undefined,
+        callback: (r) => {
+          if (r.error) return fail(r.error === 'access_denied' ? 'Accès refusé : rien n’a été lu dans votre agenda.' : 'Google n’a pas donné accès à votre agenda. Réessayez.');
+          if (!google.accounts.oauth2.hasGrantedAllScopes(r, FREEBUSY_SCOPE)) return fail('Autorisez l’accès à vos disponibilités pour comparer avec votre agenda.');
+          resolve(r.access_token);
+        },
+        error_callback: (e) => (e && e.type === 'popup_failed_to_open'
+          ? fail('La fenêtre Google a été bloquée. Autorisez les fenêtres pop-up pour ce site, puis réessayez.')
+          : fail('Fenêtre Google fermée : rien n’a été lu.', true)),
+      }).requestAccessToken();
+    });
+  }
+  async function fetchBusy(token, from, to) {
+    const busy = [];
+    // Par tranches de 30 jours, pour rester dans ce que Google accepte en une requête.
+    for (let a = from; a < to; a += 30 * DAY_MS) {
+      let res, data = null;
+      try {
+        res = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+          body: JSON.stringify({ timeMin: new Date(a).toISOString(), timeMax: new Date(Math.min(to, a + 30 * DAY_MS)).toISOString(), items: [{ id: 'primary' }] }),
+        });
+        data = await res.json();
+      } catch (e) {
+        if (!res) throw new Error('Impossible de joindre Google Agenda. Vérifiez votre réseau et réessayez.');
+      }
+      const cal = data && data.calendars && data.calendars.primary;
+      if (!res.ok || !cal || cal.errors) throw new Error('Google Agenda n’a pas répondu. Réessayez dans un instant.');
+      for (const b of cal.busy || []) busy.push([Date.parse(b.start), Date.parse(b.end)]);
+    }
+    return busy;
+  }
+
+  // Conflits connus pour la réponse en cours ; on les oublie si on change de sondage ou si ses créneaux changent.
+  let agenda = { key: '', google: null, polls: null };
+  const agendaKey = () => (poll ? poll.st.i + '|' + slotsKeyOf(poll.st) : '');
+  function agendaNow() {
+    if (agenda.key !== agendaKey()) agenda = { key: agendaKey(), google: null, polls: null };
+    return agenda;
+  }
+  function conflictOf(i) {
+    if (i == null || !poll) return '';
+    const a = agendaNow();
+    return [a.google && a.google.get(i), a.polls && a.polls.get(i)].filter(Boolean).join(' · ');
+  }
+  function agendaToolsHTML() {
+    const a = agendaNow();
+    const total = poll.slots.length;
+    let n = 0;
+    for (let i = 0; i < total; i++) if (conflictOf(i)) n++;
+    const out = [];
+    if (GOOGLE_CLIENT_ID && !a.google) {
+      out.push(`<button type="button" class="mini gcal" data-act="agenda-google">${GOOGLE_ICON.replace(/18/g, '15')}Comparer avec mon agenda Google</button>`);
+    }
+    if (a.google) {
+      out.push(`<span>${n ? `${plural(n, 'créneau', 'créneaux')} déjà pris dans votre agenda${a.polls && a.polls.size ? ' ou vos autres repas' : ''}.` : 'Votre agenda est libre sur tous ces créneaux.'}</span>`);
+    } else if (n) {
+      out.push(`<span>${plural(n, 'créneau', 'créneaux')} en conflit avec vos autres repas.</span>`);
+    }
+    if ((a.google || n) && n < total) out.push(`<button type="button" class="mini" data-act="fill-free">Cocher les ${plural(total - n, 'créneau libre', 'créneaux libres')}</button>`);
+    if (GOOGLE_CLIENT_ID && !a.google) out.push('<span class="hint">Google ne transmet que vos plages occupées, rien n’est enregistré.</span>');
+    return out.join('');
+  }
+  // Met à jour les repères sans reconstruire le formulaire (on ne perd ni le focus ni la saisie).
+  function paintAgenda() {
+    if (!ui.open || !poll || !poll.slots) return;
+    app.querySelectorAll('.sbtn').forEach((el) => {
+      const i = +el.dataset.i, v = ui.vals[i] || 0;
+      el.className = slotClass(i, v);
+      el.querySelector('.sl').innerHTML = slotLabelHTML(i);
+      el.setAttribute('aria-label', slotAria(poll.slots[i], v, i));
+    });
+    const box = $('#ans-agenda');
+    if (box) box.innerHTML = agendaToolsHTML();
+  }
+  function compareGoogle(btn) {
+    const key = agendaKey();
+    const slots = poll.slots;
+    return runAction(btn, 'Lecture de l’agenda…', async () => {
+      // Script déjà prêt : la fenêtre s'ouvre dans le geste même, sinon les navigateurs la bloquent.
+      const ready = window.google && google.accounts && google.accounts.oauth2;
+      const token = await (ready ? googleToken() : loadGis().then(googleToken));
+      const ranges = slots.map(slotRange);
+      const busy = await fetchBusy(token, Math.min(...ranges.map((r) => r[0])), Math.max(...ranges.map((r) => r[1])));
+      if (agendaKey() !== key || !ui.open) return;
+      const found = new Map();
+      slots.forEach((sl, i) => { const label = busyLabel(sl, ranges[i], busy); if (label) found.set(i, label); });
+      agendaNow().google = found;
+      paintAgenda();
+      showToast(found.size ? `${plural(found.size, 'créneau', 'créneaux')} déjà pris dans votre agenda.` : 'Rien dans votre agenda sur ces créneaux.');
+    });
+  }
+  // Repas déjà décidés dans les autres sondages du compte, au même moment : aucun accès à l'agenda nécessaire.
+  async function loadPollConflicts() {
+    if (!auth.user || !poll || poll.example) return;
+    const key = agendaKey();
+    try {
+      const { polls } = await api('GET', '/me/polls');
+      if (agendaKey() !== key || !ui.open) return;
+      const overlap = (a, b) => { const ha = MOMENT_HOURS[a], hb = MOMENT_HOURS[b]; return !ha || !hb || (ha[0] < hb[1] && hb[0] < ha[1]); };
+      const found = new Map();
+      for (const p of polls) {
+        if (p.i === poll.st.i || !p.fd) continue;
+        const d = parseYmd(p.fd);
+        poll.slots.forEach((sl, i) => {
+          if (sl.d === d && overlap(sl.t, p.ft)) found.set(i, (found.has(i) ? found.get(i) + ', ' : '') + `« ${p.t} »`);
+        });
+      }
+      agendaNow().polls = found;
+      paintAgenda();
+    } catch (e) { /* facultatif : sans cette information, le formulaire marche pareil */ }
+  }
+  function setVals(fn) {
+    ui.vals = poll.slots.map((_, i) => fn(i));
+    app.querySelectorAll('.sbtn').forEach((el) => {
+      const i = +el.dataset.i, v = ui.vals[i];
+      el.className = slotClass(i, v);
+      el.setAttribute('aria-label', slotAria(poll.slots[i], v, i));
+    });
+    $('#ans-count').textContent = answerCountText();
+  }
 
   function openAnswer(name) {
     const slots = buildSlots(poll.st);
@@ -1123,6 +1321,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       ui.name = name || displayName();
       ui.vals = slots.map(() => 0);
     }
+    // Après l'affichage du formulaire : repas déjà décidés du compte, et script Google prêt pour le bouton.
+    setTimeout(() => {
+      loadPollConflicts();
+      if (GOOGLE_CLIENT_ID) loadGis().catch(() => {});
+    });
   }
 
   function answerHTML(c) {
@@ -1150,7 +1353,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         lastDay = sl.d;
       }
       const v = ui.vals[i] || 0;
-      rows += `<button type="button" class="sbtn s${v}" data-act="slot" data-i="${i}" aria-label="${esc(slotAria(sl, v))}"><span class="mk" aria-hidden="true"></span>${MOMENTS[sl.t]}</button>`;
+      rows += `<button type="button" class="${slotClass(i, v)}" data-act="slot" data-i="${i}" aria-label="${esc(slotAria(sl, v, i))}"><span class="mk" aria-hidden="true"></span><span class="sl">${slotLabelHTML(i)}</span></button>`;
     });
     if (lastDay !== null) rows += '</div></div>';
     const del = !ui.editing ? '' : ui.delAsk
@@ -1162,6 +1365,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         ? `<p class="hint">Connecté&nbsp;: cette réponse sera liée à votre compte${poll.st.owned ? '. Vous seul, ou l’organisateur, pourrez la modifier' : ''}.</p>` : ''}</div>
       <p class="legend">Touchez un créneau&nbsp;: une fois <span class="pill s1">✓ dispo</span> deux fois <span class="pill s2">~ si besoin</span> trois fois pour effacer.</p>
       <div class="bulk"><button type="button" class="mini" data-act="bulk" data-v="1">Tout cocher</button><button type="button" class="mini" data-act="bulk" data-v="0">Tout effacer</button></div>
+      <div class="agenda-tools" id="ans-agenda" aria-live="polite">${agendaToolsHTML()}</div>
       <div class="adays">${rows}</div>
       <div class="field"><label for="ans-note">Un petit mot <span class="opt">(facultatif)</span></label><input type="text" id="ans-note" maxlength="${MAX_NOTE}" placeholder="Dispo seulement après 20 h" autocomplete="off" value="${esc(ui.note)}"></div>
       ${del}
@@ -1229,6 +1433,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         ${poll.example ? '' : `<a class="btn chalk" href="/api/polls/${esc(poll.st.i)}/evenement.ics">Apple, Outlook et autres</a>`}
       </div>
       <p class="v-more">Horaires indicatifs, ${when}, à ajuster dans votre agenda.</p>
+      ${auth.user && !poll.example ? '<p class="v-more">Pour que les prochaines dates s’ajoutent toutes seules&nbsp;: le lien d’agenda de <a href="#compte">Mon compte</a>.</p>' : ''}
     </div>`;
   }
 
@@ -1392,18 +1597,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     const i = +el.dataset.i;
     const v = ((ui.vals[i] || 0) + 1) % 3;
     ui.vals[i] = v;
-    el.className = 'sbtn s' + v;
-    el.setAttribute('aria-label', slotAria(poll.slots[i], v));
+    el.className = slotClass(i, v);
+    el.setAttribute('aria-label', slotAria(poll.slots[i], v, i));
     $('#ans-count').textContent = answerCountText();
   }
-  function bulk(v) {
-    ui.vals = ui.vals.map(() => v);
-    app.querySelectorAll('.sbtn').forEach((el) => {
-      el.className = 'sbtn s' + v;
-      el.setAttribute('aria-label', slotAria(poll.slots[+el.dataset.i], v));
-    });
-    $('#ans-count').textContent = answerCountText();
-  }
+  const bulk = (v) => setVals(() => v);
 
   function scrollToId(id) {
     const el = document.getElementById(id);
@@ -1455,6 +1653,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   }
   // Connexion ou déconnexion : la vue en cours se met à jour (droits d'organisateur, réponses protégées…).
   function onAuthChanged() {
+    account.feed = undefined; // le lien d'agenda est propre au compte : on le relit
     if (view === 'poll' && poll && !poll.example) refresh(true);
     else if (view === 'pin' && pinFor === lastRoute) loadPoll(pinFor); // l'organisateur passe sans code
     else if (view === 'create') showCreate();
@@ -1509,6 +1708,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       ${u.provider === 'password' && !u.verified ? '<div class="banner"><p>Confirmez votre adresse e-mail&nbsp;: un lien vous a été envoyé.</p><button type="button" class="btn" data-act="verify-again">Renvoyer l’e-mail</button></div>' : ''}
       <section class="mine" id="me-polls" aria-labelledby="mp-h"><h2 id="mp-h">Mes sondages</h2><p class="hint">Chargement…</p></section>
       <div class="share-actions"><a class="btn primary" href="#nouveau">Créer un sondage</a><button type="button" class="btn" data-act="logout">Se déconnecter</button></div>
+      <section class="card" aria-labelledby="ag-h">
+        <h2 id="ag-h">Mes repas dans mon agenda</h2>
+        <p class="muted">Ajoutez ce lien une fois à votre agenda&nbsp;: chaque date choisie s’y ajoute toute seule, et suit les changements. Sont concernés les sondages que vous organisez, et ceux où vous avez répondu dispo à la date retenue.</p>
+        <div class="feed" id="me-feed">${feedHTML()}</div>
+      </section>
       <section class="card danger-zone" aria-labelledby="dz-h">
         <h2 id="dz-h">Supprimer mon compte</h2>
         <p class="muted">Vos réponses resteront dans les sondages mais ne seront plus liées à vous. Les sondages que vous organisez resteront accessibles à leurs participants, sans organisateur.</p>
@@ -1521,6 +1725,56 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       </section>
       <p class="hint"><a href="#confidentialite">Confidentialité</a></p>`;
     loadMyPolls();
+    loadFeed();
+  }
+
+  /* ---------- Lien d'agenda personnel (abonnement) ---------- */
+  // account.feed : undefined pendant le chargement, null sans lien, sinon l'adresse https du lien.
+  const FEED_NAME = 'Repas · On mange quand ?';
+  function feedHTML() {
+    const url = account.feed;
+    if (url === undefined) return '<p class="hint">Chargement…</p>';
+    if (url === null) return '<div class="share-actions"><button type="button" class="btn primary" data-act="feed-create">Créer mon lien d’agenda</button></div>';
+    const webcal = url.replace(/^https?:/, 'webcal:');
+    const google = 'https://calendar.google.com/calendar/r?cid=' + encodeURIComponent(webcal);
+    const outlook = 'https://outlook.live.com/calendar/0/addfromweb?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(FEED_NAME);
+    return `<div class="share-actions">
+        <a class="btn" href="${esc(google)}" target="_blank" rel="noopener">Google Agenda</a>
+        <a class="btn" href="${esc(webcal)}">Apple Calendrier</a>
+        <a class="btn" href="${esc(outlook)}" target="_blank" rel="noopener">Outlook</a>
+      </div>
+      <div class="link-row"><input type="text" id="feed-link" readonly value="${esc(url)}" aria-label="Lien d’agenda"><button type="button" class="btn" data-act="copy" data-target="feed-link">Copier le lien</button></div>
+      <p class="hint">Google Agenda relit ce lien toutes les quelques heures, Apple et Outlook plus souvent. Il est personnel&nbsp;: toute personne qui l’a voit vos repas décidés.</p>
+      ${account.feedAsk
+        ? `<div class="confirm"><span>${account.feedAsk === 'off'
+            ? 'Désactiver le lien&nbsp;? Les repas disparaîtront des agendas où il a été ajouté.'
+            : 'Changer de lien&nbsp;? L’actuel cessera de marcher&nbsp;: il faudra ajouter le nouveau à votre agenda.'}</span>
+            <button type="button" class="btn danger" data-act="feed-${account.feedAsk === 'off' ? 'off' : 'renew'}">${account.feedAsk === 'off' ? 'Désactiver' : 'Changer de lien'}</button>
+            <button type="button" class="btn" data-act="feed-cancel">Annuler</button></div>`
+        : '<div class="share-actions"><button type="button" class="linkbtn" data-act="feed-ask" data-p="renew">Changer de lien</button><button type="button" class="linkbtn danger" data-act="feed-ask" data-p="off">Désactiver</button></div>'}`;
+  }
+  function paintFeed() {
+    const box = document.getElementById('me-feed');
+    if (view === 'account' && box) box.innerHTML = feedHTML();
+  }
+  async function loadFeed() {
+    try {
+      const { url } = await api('GET', '/me/agenda');
+      account.feed = url;
+    } catch (err) {
+      account.feed = null;
+      showToast(err.message, true);
+    }
+    paintFeed();
+  }
+  function changeFeed(btn, method, label) {
+    return runAction(btn, label, async () => {
+      const { url } = await api(method, '/me/agenda');
+      account.feed = url;
+      account.feedAsk = null;
+      paintFeed();
+      showToast(url ? 'Lien d’agenda prêt : ajoutez-le à votre agenda.' : 'Lien d’agenda désactivé.');
+    });
   }
 
   async function loadMyPolls() {
@@ -1530,7 +1784,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       const { polls } = await api('GET', '/me/polls');
       if (view !== 'account' || !box.isConnected) return;
       box.innerHTML = title + (polls.length
-        ? `<ul>${polls.map((p) => `<li><a href="#${esc(p.i)}"><span class="mt">${esc(p.t || 'Repas')}</span><span class="ms">${fmt(fDM, parseYmd(p.s))} → ${fmt(fDM, parseYmd(p.e))} · ${plural(p.answers, 'réponse')} · ${p.owner ? 'vous organisez' : 'vous avez répondu'}</span></a></li>`).join('')}</ul>`
+        ? `<ul>${polls.map((p) => `<li><a href="#${esc(p.i)}"><span class="mt">${esc(p.t || 'Repas')}</span><span class="ms">${fmt(fDM, parseYmd(p.s))} → ${fmt(fDM, parseYmd(p.e))} · ${plural(p.answers, 'réponse')} · ${p.owner ? 'vous organisez' : 'vous avez répondu'}${p.fd ? ' · prévu ' + fmt(fShort, parseYmd(p.fd)) : ''}</span></a></li>`).join('')}</ul>`
         : '<p class="hint">Aucun sondage pour l’instant. Ceux que vous créez ou auxquels vous répondez en étant connecté apparaîtront ici.</p>');
     } catch (err) {
       if (box.isConnected) box.innerHTML = `${title}<p class="error">${esc(err.message)}</p>`;
@@ -1627,6 +1881,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         <p>Pas de publicité, pas de revente, pas de pistage. Les données servent uniquement à faire fonctionner les sondages. Comme pour tout site, nos hébergeurs gardent des journaux techniques (adresse IP, heure de connexion) pour le bon fonctionnement et la sécurité.</p>
         <h2>Sondages protégés par un code</h2>
         <p>L’organisateur peut protéger un sondage par un code. Le code est enregistré avec le sondage pour qu’il puisse toujours le retrouver. Une fois le bon code saisi, votre navigateur garde un cookie technique, propre à ce sondage, pour ne pas vous le redemander. Pour bloquer les essais en série, les essais de code sont comptés pendant 15&nbsp;minutes avec une empreinte de votre adresse IP, puis effacés.</p>
+        <h2>Agenda</h2>
+        <ul>
+          <li><strong>Comparer avec mon agenda Google</strong>, seulement si vous touchez ce bouton&nbsp;: Google vous demande votre accord, puis donne à votre navigateur les plages où vous êtes occupé sur la période du sondage, sans le titre ni le contenu de vos événements. La comparaison se fait sur votre appareil&nbsp;: rien n’est envoyé à notre serveur ni enregistré. Pour que la fenêtre de Google s’ouvre sans délai, son script est chargé quand vous ouvrez le formulaire de réponse.</li>
+          <li><strong>Lien d’agenda</strong> (avec un compte)&nbsp;: si vous le créez, nous gardons un jeton secret relié à votre compte. Toute personne qui a le lien voit les repas décidés de vos sondages (nom, précisions, date). Vous pouvez le changer ou le désactiver dans Mon compte&nbsp;; il est effacé avec votre compte.</li>
+        </ul>
         <h2>Où sont les données</h2>
         <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase).</p>
         <h2>Supprimer votre compte</h2>
@@ -1690,6 +1949,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       case 'close-answer': { const created = ui.created; ui = freshUi(); ui.created = created; renderPoll(); scrollToId('answer'); break; }
       case 'slot': cycleSlot(el); break;
       case 'bulk': bulk(+el.dataset.v); break;
+      case 'fill-free': setVals((i) => (conflictOf(i) ? 0 : 1)); break;
+      case 'agenda-google': compareGoogle(el); break;
       case 'save': saveAnswer(el); break;
       case 'del-ask': {
         ui.delAsk = true; renderPoll();
@@ -1719,6 +1980,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       case 'acct-del-ask': account.delAsk = true; showAccount(); { const n = $('#del-pass') || $('[data-act="acct-del-confirm"]'); if (n) n.focus(); } break;
       case 'acct-del-cancel': account.delAsk = false; showAccount(); break;
       case 'acct-del-confirm': deleteAccount(el); break;
+      case 'feed-create': changeFeed(el, 'POST', 'Création…'); break;
+      case 'feed-renew': changeFeed(el, 'POST', 'Changement…'); break;
+      case 'feed-off': changeFeed(el, 'DELETE', 'Désactivation…'); break;
+      case 'feed-ask': account.feedAsk = el.dataset.p; paintFeed(); { const n = document.querySelector('#me-feed .confirm .btn'); if (n) n.focus(); } break;
+      case 'feed-cancel': account.feedAsk = null; paintFeed(); break;
       case 'final': setFinal(el, +el.dataset.i); break;
       case 'unfinal': setFinal(el, -1); break;
     }
