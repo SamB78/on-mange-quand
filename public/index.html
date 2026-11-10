@@ -106,7 +106,7 @@ a { color: var(--accent); }
 .field { display: flex; flex-direction: column; gap: 8px; border: 0; padding: 0; margin: 0; min-width: 0; }
 .field > label, .field > legend, .label { font-weight: 600; font-size: 0.92rem; padding: 0; }
 .opt { font-weight: 400; color: var(--muted); }
-input[type="text"], input[type="date"] {
+input[type="text"], input[type="date"], input[type="email"], input[type="password"] {
   font: inherit; color: var(--ink); background: var(--paper);
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
   width: 100%; min-width: 0; min-height: 46px;
@@ -318,6 +318,32 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
 .agenda { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--chalk-line); }
 .org-badge { align-self: flex-start; font-size: 0.8rem; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 12px; }
 .card.org { border-style: dashed; border-color: var(--accent); }
+.who-name { font-weight: 700; color: var(--ink); display: inline-block; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.topbar {
+  max-width: 46rem; margin: 0 auto; display: flex; justify-content: flex-end; align-items: center; min-height: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-top: 12px;
+}
+.topbar:empty { display: none; }
+.account-link {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 14px 6px 6px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 0.9rem;
+}
+.account-link.out { padding-left: 14px; color: var(--accent); }
+.avatar { width: 28px; height: 28px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-size: 0.85rem; font-weight: 700; }
+.notice { background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; font-size: 0.95rem; }
+.banner.closed { border-color: var(--muted); background: var(--surface); }
+.or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 0.85rem; }
+.or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--paper); border-radius: 12px; padding: 4px; }
+.tabs button { font: inherit; font-weight: 600; min-height: 40px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.auth-form { display: flex; flex-direction: column; gap: 16px; }
+.btn.google { background: var(--surface); }
+.btn.google svg { flex: none; }
+.danger-zone { border-color: var(--line); }
+.prose { display: flex; flex-direction: column; gap: 12px; max-width: 40rem; }
+.prose h2 { margin-top: 10px; }
+.prose ul { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 6px; }
 .live { display: inline-flex; align-items: center; gap: 6px; }
 .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--yes); }
 
@@ -340,6 +366,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
 </head>
 <body>
 <div class="band" aria-hidden="true"></div>
+<nav class="topbar" id="topbar" aria-label="Compte"></nav>
 <main class="wrap" id="app"><p class="loading">Chargement…</p></main>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
@@ -406,9 +433,10 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   }
 
   /* ---------- Serveur ---------- */
-  async function api(method, path, body) {
-    const target = /^\/polls\/([a-z2-7]{10})/.exec(path);
-    const headers = target ? authHeaders(target[1]) : {};
+  async function api(method, path, body, retry = true) {
+    const headers = {};
+    const token = await auth.token();
+    if (token) headers.authorization = 'Bearer ' + token;
     if (body) headers['content-type'] = 'application/json';
     let res;
     try {
@@ -422,6 +450,14 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       const err = new Error('Connexion impossible. Vérifiez votre réseau et réessayez.');
       err.status = 0;
       throw err;
+    }
+    if (res.status === 401 && token && retry) {
+      // Jeton refusé : on en redemande un neuf ; si ça ne suffit pas, on se déconnecte et on continue sans compte.
+      const fresh = await auth.token(true).catch(() => null);
+      if (fresh && fresh !== token) return api(method, path, body, false);
+      await auth.logout();
+      showToast('Votre session a expiré : vous êtes déconnecté.', true);
+      return api(method, path, body, false);
     }
     let data = null;
     try { data = await res.json(); } catch (e) { /* réponse vide */ }
@@ -484,45 +520,47 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   function remember(st, me) {
     const s = loadStore();
     const prev = s.polls[st.i] || {};
-    s.polls[st.i] = Object.assign({}, prev, { t: st.t, s: st.s, e: st.e, n: st.p.length, seen: Date.now(), me: me !== undefined ? me : (prev.me || null) });
-    // On oublie les plus anciens, sauf ceux dont on est l'organisateur.
+    s.polls[st.i] = Object.assign({}, prev, { t: st.t, s: st.s, e: st.e, n: st.p.length, seen: Date.now(), own: !!st.isOwner, me: me !== undefined ? me : (prev.me || null) });
     Object.keys(s.polls)
       .sort((a, b) => (s.polls[b].seen || 0) - (s.polls[a].seen || 0))
       .slice(50)
-      .forEach((id) => { if (!s.polls[id].adm) delete s.polls[id]; });
+      .forEach((id) => { delete s.polls[id]; });
     saveStore(s);
   }
   function forgetPoll(id) {
     const s = loadStore();
     delete s.polls[id];
     saveStore(s);
-    delete memory.adm[id];
   }
 
-  /* ---------- Lien organisateur ---------- */
-  // Gardé dans ce navigateur ; en mémoire seulement si le navigateur refuse de le garder.
-  const memory = { adm: {} };
-  function adminToken(id) {
-    const rec = loadStore().polls[id];
-    return (rec && rec.adm) || memory.adm[id] || null;
-  }
-  function setAdmin(id, token) {
-    storePatch(id, { adm: token });
-    const rec = loadStore().polls[id];
-    if (!rec || rec.adm !== token) memory.adm[id] = token;
-  }
-  function clearAdmin(id) {
-    delete memory.adm[id];
-    const s = loadStore();
-    if (s.polls[id]) { delete s.polls[id].adm; saveStore(s); }
-  }
-  function authHeaders(id) {
-    const adm = adminToken(id);
-    return adm ? { 'x-admin-token': adm } : {};
-  }
+  /* ---------- Compte (Firebase, branché par le module en bas de page) ---------- */
+  // Sans compte, tout marche. Quand Firebase est prêt, il se branche ici ; s'il ne charge pas, l'app continue sans compte.
+  const auth = {
+    enabled: false,
+    user: null, // { uid, email, name, verified, provider }
+    impl: null,
+    token(force) { return this.impl && this.user ? this.impl.token(force) : Promise.resolve(null); },
+    async logout() { if (this.impl) await this.impl.logout(); },
+  };
+  let authSettled;
+  const authReady = new Promise((resolve) => { authSettled = resolve; });
+  setTimeout(() => authSettled(), 4000);
+  window.omqAuthAttach = (impl) => {
+    auth.impl = impl;
+    auth.enabled = true;
+    impl.onChange((user) => {
+      const before = auth.user ? auth.user.uid : null;
+      auth.user = user;
+      renderTopbar();
+      authSettled();
+      if ((user ? user.uid : null) !== before) onAuthChanged();
+    });
+  };
+  window.omqAuthDisabled = () => { authSettled(); renderTopbar(); };
+  const displayName = () => (auth.user ? auth.user.name || auth.user.email.split('@')[0] : '');
   const slotsKeyOf = (st) => [st.s, st.e, st.m.join('.'), st.x.join('.')].join('|');
-  // Sans organisateur (sondages créés avant, exemple), tout le monde peut choisir la date.
-  const canDecide = () => poll.example || !poll.st.org || poll.st.admin;
+  // Sans organisateur (sondage créé sans compte, exemple), tout le monde peut choisir la date.
+  const canDecide = () => poll.example || !poll.st.owned || poll.st.isOwner;
   function getMe() {
     if (!poll || poll.example) return null;
     const p = loadStore().polls[poll.st.i];
@@ -530,12 +568,14 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   }
 
   /* ---------- État ---------- */
-  let view = null;      // 'create' | 'poll' | 'loading' | 'error'
+  let view = null;      // 'create' | 'edit' | 'poll' | 'loading' | 'error' | 'account' | 'privacy'
   let lastRoute = null;
   let poll = null;      // { st, example, slots }
   let ui = freshUi();
   let busy = false;
   let refreshTimer = null;
+  let accountReturn = null; // où revenir après la connexion
+  let account = { mode: 'in', delAsk: false };
   function freshUi() { return { open: false, name: '', note: '', vals: [], editing: null, delAsk: false, savedName: '', created: false, pollDelAsk: false }; }
 
   function newDraft() {
@@ -573,9 +613,12 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       </header>`}
       ${msg ? `<p class="error" role="alert">${esc(msg)}</p>` : ''}
       ${mine.length ? `<section class="mine"><h2>Vos sondages</h2><ul>${mine.map((p) =>
-        `<li><a href="#${esc(p.id)}"><span class="mt">${esc(p.t || 'Repas')}</span><span class="ms">${fmt(fDM, parseYmd(p.s))} → ${fmt(fDM, parseYmd(p.e))} · ${plural(p.n || 0, 'réponse')}${p.adm ? ' · vous organisez' : ''}</span></a></li>`).join('')}</ul></section>` : ''}
+        `<li><a href="#${esc(p.id)}"><span class="mt">${esc(p.t || 'Repas')}</span><span class="ms">${fmt(fDM, parseYmd(p.s))} → ${fmt(fDM, parseYmd(p.e))} · ${plural(p.n || 0, 'réponse')}${p.own ? ' · vous organisez' : ''}</span></a></li>`).join('')}</ul></section>` : ''}
       <section class="card" aria-labelledby="c-h">
         <h2 id="c-h">${editing ? 'Réglages' : 'Nouveau sondage'}</h2>
+        ${!editing && auth.enabled ? (auth.user
+          ? '<p class="notice">Vous êtes connecté&nbsp;: vous serez l’organisateur. Vous seul pourrez choisir la date, modifier, clôturer ou supprimer ce sondage.</p>'
+          : '<p class="notice">Sans compte, tout le monde pourra tout modifier. <a href="#compte">Connectez-vous</a> pour en être l’organisateur (facultatif).</p>') : ''}
         <div class="field"><label for="c-title">Nom du repas</label><input type="text" id="c-title" maxlength="80" placeholder="Raclette de janvier" autocomplete="off"></div>
         <div class="field"><label for="c-note">Précisions <span class="opt">(facultatif)</span></label><input type="text" id="c-note" maxlength="160" placeholder="Chez Julie, chacun apporte un plat" autocomplete="off"></div>
         <fieldset class="field"><legend>Période</legend>
@@ -735,9 +778,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     btn.disabled = true;
     btn.textContent = 'Création…';
     try {
-      const { adminToken: adm, ...st } = await api('POST', '/polls', draftPayload());
+      const st = await api('POST', '/polls', draftPayload());
       busy = false;
-      setAdmin(st.i, adm);
       remember(st);
       poll = { st, example: false };
       ui = freshUi();
@@ -764,10 +806,6 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     try {
       const st = await api('GET', '/polls/' + id);
       if (lastRoute !== id) return;
-      if (st.org && !st.admin && adminToken(id)) {
-        clearAdmin(id);
-        showToast('Ce lien organisateur n’est pas valide pour ce sondage.', true);
-      }
       remember(st);
       const same = poll && !poll.example && poll.st.i === id;
       poll = { st, example: false };
@@ -811,15 +849,17 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         <h1>${esc(st.t || 'Repas')}</h1>
         ${st.n ? `<p class="note">${esc(st.n)}</p>` : ''}
         <p class="meta" id="meta">${esc(metaText(c))}</p>
-        ${st.admin ? '<p class="org-badge">Vous êtes l’organisateur</p>' : ''}
+        ${st.isOwner ? '<p class="org-badge">Vous êtes l’organisateur</p>' : ''}
+        ${!poll.example && !st.owned ? '<p class="hint">Sondage sans organisateur&nbsp;: tout le monde peut modifier les réponses et choisir la date.</p>' : ''}
       </header>
       ${poll.example ? `<div class="banner"><p>Exemple avec des réponses fictives. Rien n’est enregistré.</p><a class="btn" href="#nouveau">Créer mon sondage</a></div>` : ''}
-      ${!poll.example && ui.created ? shareHTML() + orgHTML() : ''}
+      ${st.closed ? `<div class="banner closed"><p>Sondage clôturé&nbsp;: les réponses ne peuvent plus changer${st.isOwner ? ', sauf par vous' : ''}.</p></div>` : ''}
+      ${!poll.example && ui.created ? shareHTML() + ownerHTML() : ''}
       <div class="slot" id="verdict-slot">${verdictHTML(c)}</div>
       <div class="slot" id="answer-slot">${answerHTML(c)}</div>
       ${!poll.example && !ui.created ? shareHTML() : ''}
       <div class="slot" id="results-slot">${tableHTML(c)}</div>
-      ${!poll.example && !ui.created ? orgHTML() : ''}`;
+      ${!poll.example && !ui.created ? ownerHTML() : ''}`;
   }
 
   // Mise à jour discrète quand d'autres personnes ont répondu : on ne touche pas au formulaire ouvert.
@@ -886,6 +926,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     if (!k) return '';
     if (ui.editing && norm(ui.editing) === k) return `Vous modifiez la réponse de ${ui.editing}.`;
     const ex = poll.st.p.find((p) => norm(p[0]) === k);
+    if (ex && ex[4] === false) return `${ex[0]} a répondu avec son compte : choisissez un autre prénom (ex. « ${name.trim()} B. »).`;
     if (ex) return `${ex[0]} a déjà répondu : cette réponse remplacera la sienne.`;
     if (ui.editing) return `La réponse de ${ui.editing} sera renommée « ${name.trim()} ».`;
     return '';
@@ -903,7 +944,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       ui.editing = p[0]; ui.name = p[0]; ui.note = p[3] || '';
       ui.vals = slots.map((_, i) => +(p[1][i] || 0));
     } else {
-      ui.name = name || '';
+      ui.name = name || displayName();
       ui.vals = slots.map(() => 0);
     }
   }
@@ -911,15 +952,16 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   function answerHTML(c) {
     const { slots, people } = c;
     if (!ui.open) {
+      if (poll.st.closed && !poll.st.isOwner) return '';
       const me = getMe();
-      const meP = me && people.find((p) => norm(p[0]) === norm(me));
+      const meP = people.find((p) => p[5]) || (me && people.find((p) => norm(p[0]) === norm(me) && p[4] !== false));
       return `<section class="cta" id="answer">
         ${ui.savedName ? `<p class="okmsg" role="status">C’est enregistré, merci ${esc(ui.savedName)}&nbsp;! Tout le monde le voit déjà sur le lien.</p>` : ''}
         ${meP
           ? `<button type="button" class="btn primary big" data-act="edit" data-name="${esc(meP[0])}">Modifier mes dispos (${esc(meP[0])})</button>
              <button type="button" class="btn" data-act="open-answer">Ajouter une autre personne</button>`
           : `<button type="button" class="btn primary big" data-act="open-answer">Ajouter mes dispos</button>`}
-        ${people.length ? '<p class="hint">Déjà répondu&nbsp;? Touchez votre prénom dans le tableau pour modifier.</p>' : ''}
+        ${people.some((p) => p[4] !== false) ? '<p class="hint">Déjà répondu&nbsp;? Touchez votre prénom dans le tableau pour modifier.</p>' : ''}
       </section>`;
     }
     let rows = '', lastDay = null, lastMonth = null;
@@ -939,7 +981,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       : `<button type="button" class="linkbtn danger" data-act="del-ask">Supprimer la réponse de ${esc(ui.editing)}</button>`;
     return `<section class="card answer" id="answer" aria-labelledby="a-h">
       <div class="ahead"><h2 id="a-h">${ui.editing ? 'Modifier une réponse' : 'Mes dispos'}</h2><button type="button" class="linkbtn" data-act="close-answer">Fermer</button></div>
-      <div class="field"><label for="ans-name">Prénom</label><input type="text" id="ans-name" maxlength="40" autocomplete="given-name" placeholder="Camille" value="${esc(ui.name)}"><p class="hint" id="ans-hint" aria-live="polite">${esc(nameHint(ui.name))}</p></div>
+      <div class="field"><label for="ans-name">Prénom</label><input type="text" id="ans-name" maxlength="40" autocomplete="given-name" placeholder="Camille" value="${esc(ui.name)}"><p class="hint" id="ans-hint" aria-live="polite">${esc(nameHint(ui.name))}</p>${auth.user && !ui.editing && !poll.example
+        ? `<p class="hint">Connecté&nbsp;: cette réponse sera liée à votre compte${poll.st.owned ? '. Vous seul, ou l’organisateur, pourrez la modifier' : ''}.</p>` : ''}</div>
       <p class="legend">Touchez un créneau&nbsp;: une fois <span class="pill s1">✓ dispo</span> deux fois <span class="pill s2">~ si besoin</span> trois fois pour effacer.</p>
       <div class="bulk"><button type="button" class="mini" data-act="bulk" data-v="1">Tout cocher</button><button type="button" class="mini" data-act="bulk" data-v="0">Tout effacer</button></div>
       <div class="adays">${rows}</div>
@@ -962,20 +1005,15 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     </section>`;
   }
 
-  function orgLink() { return location.origin + location.pathname + '#' + poll.st.i + '-' + adminToken(poll.st.i); }
-  function orgHTML() {
-    if (poll.example || !poll.st.admin || !adminToken(poll.st.i)) return '';
-    const title = poll.st.t || 'Repas';
-    const link = orgLink();
-    const mail = 'mailto:?subject=' + encodeURIComponent(`Lien organisateur : ${title}`)
-      + '&body=' + encodeURIComponent(`Mon lien organisateur pour « ${title} », à ne pas partager :\n${link}`);
+  function ownerHTML() {
+    if (poll.example || !poll.st.isOwner) return '';
+    const closed = poll.st.closed;
     return `<section class="card org" id="org" aria-labelledby="o-h">
-      <h2 id="o-h">Votre lien organisateur</h2>
-      <p class="muted">Gardez-le pour vous&nbsp;: il permet de choisir la date finale, de modifier ou de supprimer le sondage, depuis n’importe quel appareil. Ne l’envoyez pas au groupe.</p>
-      <div class="link-row"><input type="text" id="org-link" readonly value="${esc(link)}" aria-label="Lien organisateur"><button type="button" class="btn" data-act="copy" data-target="org-link">Copier le lien</button></div>
+      <h2 id="o-h">Organisation</h2>
+      <p class="muted">Vous seul choisissez la date finale, modifiez, clôturez ou supprimez ce sondage, depuis n’importe quel appareil où vous êtes connecté.</p>
       <div class="share-actions">
-        <a class="btn" href="${esc(mail)}">Me l’envoyer par e-mail</a>
         <button type="button" class="btn" data-act="edit-poll">Modifier le sondage</button>
+        <button type="button" class="btn" data-act="toggle-closed">${closed ? 'Rouvrir le sondage' : 'Clôturer le sondage'}</button>
       </div>
       ${ui.pollDelAsk
         ? '<div class="confirm"><span>Supprimer le sondage et toutes ses réponses&nbsp;?</span><button type="button" class="btn danger" data-act="poll-del-confirm">Supprimer</button><button type="button" class="btn" data-act="poll-del-cancel">Annuler</button></div>'
@@ -1019,7 +1057,9 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     const f = finalIndex(slots);
     const isBest = (r) => f < 0 && best.tot > 0 && r.tot === best.tot && r.y === best.y;
     const head = `<tr><th class="c-slot" scope="col">Créneau</th><th class="c-score" scope="col">Dispo</th>${people.map((p) =>
-      `<th scope="col"><button type="button" class="who-btn" data-act="edit" data-name="${esc(p[0])}" title="Modifier la réponse de ${esc(p[0])}">${esc(p[0])}</button></th>`).join('')}</tr>`;
+      `<th scope="col">${p[4] === false
+        ? `<span class="who-name" title="Réponse protégée par un compte">${esc(p[0])}</span>`
+        : `<button type="button" class="who-btn" data-act="edit" data-name="${esc(p[0])}" title="Modifier la réponse de ${esc(p[0])}">${esc(p[0])}</button>`}</th>`).join('')}</tr>`;
     const body = slots.map((sl, i) => {
       const r = stats[i];
       const cls = i === f ? 'final' : isBest(r) ? 'best' : '';
@@ -1033,7 +1073,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     }).join('');
     return `<section class="results" aria-labelledby="r-h">
       <h2 id="r-h">Toutes les réponses</h2>
-      <p class="hint">Touchez un prénom pour modifier sa réponse. ${poll.example ? '' : '<span class="live">Mis à jour automatiquement</span>'}</p>
+      <p class="hint">${people.some((p) => p[4] !== false) ? 'Touchez un prénom souligné pour modifier sa réponse. ' : ''}${poll.example ? '' : '<span class="live">Mis à jour automatiquement</span>'}</p>
       ${notesHTML(people)}
       <div class="table-scroll"><table class="grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>
     </section>`;
@@ -1070,7 +1110,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     try {
       await fn();
     } catch (err) {
-      showToast(err.message, true);
+      if (!err.silent) showToast(err.message, true);
       if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = old; }
     } finally {
       busy = false;
@@ -1082,6 +1122,13 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     const hint = $('#ans-hint');
     if (!name) {
       hint.textContent = 'Indiquez votre prénom pour enregistrer.';
+      hint.classList.add('error');
+      $('#ans-name').focus();
+      return;
+    }
+    const clash = poll.st.p.find((p) => norm(p[0]) === norm(name) && p[4] === false);
+    if (clash) {
+      hint.textContent = nameHint(name);
       hint.classList.add('error');
       $('#ans-name').focus();
       return;
@@ -1116,6 +1163,18 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         showToast('Créneau choisi : tout le monde le voit sur le lien.');
         scrollToId('verdict-slot');
       }
+    });
+  }
+
+  function toggleClosed(btn) {
+    const closed = !poll.st.closed;
+    return runAction(btn, closed ? 'Clôture…' : 'Réouverture…', async () => {
+      const st = await api('PUT', '/polls/' + poll.st.i + '/closed', { closed });
+      poll.st = st;
+      remember(st);
+      ui.pollDelAsk = false;
+      renderPoll();
+      showToast(closed ? 'Sondage clôturé : les réponses ne peuvent plus changer.' : 'Sondage rouvert.');
     });
   }
 
@@ -1167,14 +1226,14 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   }
 
   /* ---------- Actualisation automatique ---------- */
-  const signature = (st) => JSON.stringify([st.p, st.f, st.admin, st.t, st.n, slotsKeyOf(st)]);
-  async function refresh() {
-    if (view !== 'poll' || !poll || poll.example || busy || document.visibilityState !== 'visible') return;
+  const signature = (st) => JSON.stringify([st.p, st.f, st.owned, st.isOwner, st.closed, st.t, st.n, slotsKeyOf(st)]);
+  async function refresh(force) {
+    if (view !== 'poll' || !poll || poll.example || busy || (!force && document.visibilityState !== 'visible')) return;
     const id = poll.st.i;
     try {
       const st = await api('GET', '/polls/' + id);
       if (busy || !poll || poll.st.i !== id) return;
-      if (signature(st) !== signature(poll.st)) {
+      if (force || signature(st) !== signature(poll.st)) {
         const before = poll.st;
         poll.st = st;
         remember(st);
@@ -1183,7 +1242,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
           ui = freshUi();
           renderPoll();
           showToast('L’organisateur a modifié les dates : cochez à nouveau vos dispos.', true);
-        } else if (!ui.open && (datesChanged || st.t !== before.t || st.n !== before.n || st.admin !== before.admin)) {
+        } else if (force || (!ui.open && (datesChanged || st.t !== before.t || st.n !== before.n || st.isOwner !== before.isOwner || st.closed !== before.closed))) {
+          if (ui.open && (st.closed && !st.isOwner)) ui = freshUi();
           renderPoll();
         } else {
           renderLive();
@@ -1194,6 +1254,192 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   function startRefresh() { stopRefresh(); refreshTimer = setInterval(refresh, REFRESH_MS); }
   function stopRefresh() { if (refreshTimer) clearInterval(refreshTimer); refreshTimer = null; }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+
+  /* ---------- Barre de compte ---------- */
+  const topbar = document.getElementById('topbar');
+  function renderTopbar() {
+    if (!auth.enabled) { topbar.innerHTML = ''; return; }
+    topbar.innerHTML = auth.user
+      ? `<a href="#compte" class="account-link"><span class="avatar" aria-hidden="true">${esc((displayName().charAt(0) || '?').toUpperCase())}</span>${esc(displayName())}</a>`
+      : '<a href="#compte" class="account-link out">Se connecter</a>';
+  }
+  // Connexion ou déconnexion : la vue en cours se met à jour (droits d'organisateur, réponses protégées…).
+  function onAuthChanged() {
+    if (view === 'poll' && poll && !poll.example) refresh(true);
+    else if (view === 'create') showCreate();
+    else if (view === 'account') showAccount();
+  }
+
+  /* ---------- Vue : compte ---------- */
+  const GOOGLE_ICON = '<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+  const backLink = () => `<a class="back" href="#${esc(accountReturn || 'nouveau')}">← Retour</a>`;
+
+  function showAccount() {
+    view = 'account';
+    poll = null;
+    if (!auth.enabled) {
+      app.innerHTML = `<header class="poll-head">${backLink()}<h1>Mon compte</h1><p class="error" role="alert">La connexion n’est pas disponible pour le moment. L’app reste utilisable sans compte.</p></header>`;
+      return;
+    }
+    if (!auth.user) {
+      const up = account.mode === 'up';
+      app.innerHTML = `
+        <header class="poll-head">
+          ${backLink()}
+          <h1>${up ? 'Créer un compte' : 'Se connecter'}</h1>
+          <p class="lede">Le compte est facultatif. Il permet d’organiser un sondage (vous seul choisissez la date, le modifiez ou le clôturez), de protéger vos réponses et de retrouver vos sondages sur tous vos appareils.</p>
+        </header>
+        <section class="card" aria-label="Connexion">
+          <button type="button" class="btn big google" data-act="google">${GOOGLE_ICON}Continuer avec Google</button>
+          <p class="or">ou</p>
+          <div class="tabs" role="tablist" aria-label="Avec une adresse e-mail">
+            <button type="button" role="tab" aria-selected="${!up}" data-act="auth-mode" data-m="in">Se connecter</button>
+            <button type="button" role="tab" aria-selected="${up}" data-act="auth-mode" data-m="up">Créer un compte</button>
+          </div>
+          <form class="auth-form" id="auth-form" novalidate>
+            ${up ? '<div class="field"><label for="au-name">Prénom</label><input type="text" id="au-name" maxlength="40" autocomplete="given-name" placeholder="Camille"></div>' : ''}
+            <div class="field"><label for="au-email">E-mail</label><input type="email" id="au-email" autocomplete="email" inputmode="email" value="${esc(account.email || '')}"></div>
+            <div class="field"><label for="au-pass">Mot de passe</label><input type="password" id="au-pass" autocomplete="${up ? 'new-password' : 'current-password'}">${up ? '<p class="hint">6 caractères minimum.</p>' : ''}</div>
+            <p class="error" id="au-error" role="alert" hidden></p>
+            <button type="submit" class="btn primary big" id="au-submit">${up ? 'Créer mon compte' : 'Se connecter'}</button>
+            ${up ? '' : '<button type="button" class="linkbtn" data-act="reset">Mot de passe oublié&nbsp;?</button>'}
+          </form>
+          <p class="hint">En utilisant un compte, vous acceptez la <a href="#confidentialite">politique de confidentialité</a>.</p>
+        </section>`;
+      return;
+    }
+    const u = auth.user;
+    app.innerHTML = `
+      <header class="poll-head">
+        ${backLink()}
+        <h1>Mon compte</h1>
+        <p class="meta">${esc(displayName())} · ${esc(u.email)}${u.provider === 'google' ? ' · connecté avec Google' : ''}</p>
+      </header>
+      ${u.provider === 'password' && !u.verified ? '<div class="banner"><p>Confirmez votre adresse e-mail&nbsp;: un lien vous a été envoyé.</p><button type="button" class="btn" data-act="verify-again">Renvoyer l’e-mail</button></div>' : ''}
+      <section class="mine" id="me-polls" aria-labelledby="mp-h"><h2 id="mp-h">Mes sondages</h2><p class="hint">Chargement…</p></section>
+      <div class="share-actions"><a class="btn primary" href="#nouveau">Créer un sondage</a><button type="button" class="btn" data-act="logout">Se déconnecter</button></div>
+      <section class="card danger-zone" aria-labelledby="dz-h">
+        <h2 id="dz-h">Supprimer mon compte</h2>
+        <p class="muted">Vos réponses resteront dans les sondages mais ne seront plus liées à vous. Les sondages que vous organisez resteront accessibles à leurs participants, sans organisateur.</p>
+        ${account.delAsk
+          ? `${u.provider === 'password'
+              ? '<div class="field"><label for="del-pass">Votre mot de passe, pour confirmer</label><input type="password" id="del-pass" autocomplete="current-password"></div>'
+              : '<p class="hint">Google va vous demander de confirmer votre identité.</p>'}
+             <div class="confirm"><button type="button" class="btn danger" data-act="acct-del-confirm">Supprimer définitivement</button><button type="button" class="btn" data-act="acct-del-cancel">Annuler</button></div>`
+          : '<button type="button" class="linkbtn danger" data-act="acct-del-ask">Supprimer mon compte</button>'}
+      </section>
+      <p class="hint"><a href="#confidentialite">Confidentialité</a></p>`;
+    loadMyPolls();
+  }
+
+  async function loadMyPolls() {
+    const box = document.getElementById('me-polls');
+    const title = '<h2 id="mp-h">Mes sondages</h2>';
+    try {
+      const { polls } = await api('GET', '/me/polls');
+      if (view !== 'account' || !box.isConnected) return;
+      box.innerHTML = title + (polls.length
+        ? `<ul>${polls.map((p) => `<li><a href="#${esc(p.i)}"><span class="mt">${esc(p.t || 'Repas')}</span><span class="ms">${fmt(fDM, parseYmd(p.s))} → ${fmt(fDM, parseYmd(p.e))} · ${plural(p.answers, 'réponse')} · ${p.owner ? 'vous organisez' : 'vous avez répondu'}</span></a></li>`).join('')}</ul>`
+        : '<p class="hint">Aucun sondage pour l’instant. Ceux que vous créez ou auxquels vous répondez en étant connecté apparaîtront ici.</p>');
+    } catch (err) {
+      if (box.isConnected) box.innerHTML = `${title}<p class="error">${esc(err.message)}</p>`;
+    }
+  }
+
+  function afterLogin() {
+    showToast(`Vous êtes connecté, ${displayName()}.`);
+    if (accountReturn) location.hash = accountReturn;
+    else showAccount();
+  }
+  // Les erreurs de connexion s'affichent sous le formulaire quand il est là, sinon en bas de l'écran.
+  function authAction(btn, label, fn) {
+    const box = $('#au-error');
+    if (box) box.hidden = true;
+    return runAction(btn, label, async () => {
+      try {
+        await fn();
+      } catch (e) {
+        if (box && box.isConnected && !e.silent) { box.hidden = false; box.textContent = e.message; }
+        // Erreur silencieuse pour runAction : pas de message en bas de l'écran, mais le bouton redevient cliquable.
+        const quiet = new Error(e.message);
+        quiet.silent = e.silent || (box && box.isConnected);
+        throw quiet;
+      }
+    });
+  }
+  function signInGoogle(btn) {
+    return authAction(btn, 'Connexion…', async () => { await auth.impl.google(); afterLogin(); });
+  }
+  function submitAuth() {
+    const up = account.mode === 'up';
+    const email = $('#au-email').value.trim();
+    const pass = $('#au-pass').value;
+    const name = up ? $('#au-name').value.trim() : '';
+    account.email = email;
+    const box = $('#au-error');
+    if (!email || !pass) { box.hidden = false; box.textContent = 'Indiquez votre e-mail et votre mot de passe.'; return; }
+    return authAction($('#au-submit'), up ? 'Création…' : 'Connexion…', async () => {
+      if (up) await auth.impl.signUp(name, email, pass);
+      else await auth.impl.signIn(email, pass);
+      afterLogin();
+    });
+  }
+  function resetPassword(btn) {
+    const email = ($('#au-email') ? $('#au-email').value : '').trim();
+    const box = $('#au-error');
+    if (!email) { box.hidden = false; box.textContent = 'Indiquez votre e-mail ci-dessus, puis touchez « Mot de passe oublié ».'; return; }
+    return authAction(btn, 'Envoi…', async () => {
+      await auth.impl.reset(email);
+      showToast('Si un compte existe pour cette adresse, un e-mail pour changer le mot de passe vient de partir.');
+    });
+  }
+  function logout(btn) {
+    return runAction(btn, 'Déconnexion…', async () => { await auth.logout(); showToast('Vous êtes déconnecté.'); });
+  }
+  function verifyAgain(btn) {
+    return runAction(btn, 'Envoi…', async () => { await auth.impl.verify(); showToast('E-mail de confirmation envoyé.'); });
+  }
+  function deleteAccount(btn) {
+    const pass = $('#del-pass') ? $('#del-pass').value : '';
+    if (auth.user.provider === 'password' && !pass) { showToast('Indiquez votre mot de passe pour confirmer.', true); return; }
+    return runAction(btn, 'Suppression…', async () => {
+      await auth.impl.reauth(pass); // confirme l'identité avant de toucher à quoi que ce soit
+      await api('DELETE', '/me'); // détache le compte de ses sondages et de ses réponses
+      await auth.impl.remove(); // supprime le compte chez Firebase
+      account = { mode: 'in', delAsk: false };
+      showToast('Votre compte est supprimé.');
+      location.hash = 'nouveau';
+    });
+  }
+
+  /* ---------- Vue : confidentialité ---------- */
+  function showPrivacy() {
+    view = 'privacy';
+    poll = null;
+    app.innerHTML = `
+      <header class="poll-head">
+        <button type="button" class="back linkbtn" data-act="back">← Retour</button>
+        <h1>Confidentialité</h1>
+        <p class="meta">Dernière mise à jour&nbsp;: novembre 2026</p>
+      </header>
+      <section class="prose">
+        <h2>Sans compte</h2>
+        <p>Tout fonctionne sans compte. Un sondage enregistre seulement ce que vous y écrivez&nbsp;: prénom, dispos et petit mot. Ces informations sont visibles par toute personne qui a le lien du sondage.</p>
+        <p>Votre navigateur garde aussi, sur votre appareil uniquement, la liste des sondages ouverts et le prénom utilisé.</p>
+        <h2>Avec un compte</h2>
+        <ul>
+          <li>La connexion est gérée par Firebase Authentication (Google). Firebase conserve votre adresse e-mail, votre nom et, si vous en avez un, votre mot de passe sous forme chiffrée. Nous ne voyons jamais votre mot de passe.</li>
+          <li>Avec «&nbsp;Continuer avec Google&nbsp;», Google nous transmet votre nom et votre adresse e-mail.</li>
+          <li>Notre base de données garde seulement l’identifiant de votre compte, relié aux sondages que vous organisez et aux réponses données en étant connecté.</li>
+        </ul>
+        <h2>Ce que nous ne faisons pas</h2>
+        <p>Pas de publicité, pas de revente, pas de pistage. Les données servent uniquement à faire fonctionner les sondages. Comme pour tout site, nos hébergeurs gardent des journaux techniques (adresse IP, heure de connexion) pour le bon fonctionnement et la sécurité.</p>
+        <h2>Où sont les données</h2>
+        <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase).</p>
+        <h2>Supprimer votre compte</h2>
+        <p>Dans <a href="#compte">Mon compte</a>, touchez «&nbsp;Supprimer mon compte&nbsp;». Votre compte est effacé chez Firebase. Vos réponses restent dans les sondages mais ne sont plus liées à vous, et les sondages que vous organisiez restent accessibles à leurs participants, sans organisateur.</p>
+      </section>`;
+  }
 
   /* ---------- Exemple ---------- */
   function exampleState() {
@@ -1263,6 +1509,16 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       }
       case 'poll-del-cancel': ui.pollDelAsk = false; renderPoll(); break;
       case 'poll-del-confirm': deletePoll(el); break;
+      case 'toggle-closed': toggleClosed(el); break;
+      case 'google': signInGoogle(el); break;
+      case 'auth-mode': { const em = $('#au-email'); if (em) account.email = em.value; account.mode = el.dataset.m; showAccount(); const n = $('#au-email'); if (n) n.focus(); break; }
+      case 'back': if (history.length > 1) history.back(); else location.hash = 'nouveau'; break;
+      case 'reset': resetPassword(el); break;
+      case 'logout': logout(el); break;
+      case 'verify-again': verifyAgain(el); break;
+      case 'acct-del-ask': account.delAsk = true; showAccount(); { const n = $('#del-pass') || $('[data-act="acct-del-confirm"]'); if (n) n.focus(); } break;
+      case 'acct-del-cancel': account.delAsk = false; showAccount(); break;
+      case 'acct-del-confirm': deleteAccount(el); break;
       case 'final': setFinal(el, +el.dataset.i); break;
       case 'unfinal': setFinal(el, -1); break;
     }
@@ -1291,6 +1547,9 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       h.textContent = nameHint(t.value);
     }
   });
+  app.addEventListener('submit', (ev) => {
+    if (ev.target.id === 'auth-form') { ev.preventDefault(); submitAuth(); }
+  });
   app.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.id === 'c-start' || t.id === 'c-end') onDateChange(t);
@@ -1306,8 +1565,17 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   function route() {
     const h = location.hash.replace(/^#/, '');
     if (h === lastRoute && view) return;
+    const previous = lastRoute;
     lastRoute = h;
     stopRefresh();
+    if (h === 'compte') {
+      if (previous && previous !== 'compte' && previous !== 'confidentialite') accountReturn = previous;
+      account = { mode: 'in', delAsk: false };
+      showAccount();
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (h === 'confidentialite') { showPrivacy(); window.scrollTo(0, 0); return; }
     if (!h || h === 'nouveau') { showCreate(); window.scrollTo(0, 0); return; }
     if (h === 'exemple') {
       poll = { st: exampleState(), example: true };
@@ -1317,23 +1585,106 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       window.scrollTo(0, 0);
       return;
     }
-    const link = /^([a-z2-7]{10})(?:-([a-z2-7]{20,64}))?$/.exec(h);
+    const link = /^([a-z2-7]{10})(?:-[a-z2-7]{20,64})?$/.exec(h);
     if (link) {
       const id = link[1];
-      if (link[2]) {
-        // Lien organisateur : on garde le jeton dans ce navigateur et on le retire de l'adresse affichée.
-        setAdmin(id, link[2]);
-        history.replaceState(null, '', location.pathname + location.search + '#' + id);
-        lastRoute = id;
-      }
       loadPoll(id).then(() => window.scrollTo(0, 0));
       return;
     }
     showCreate('Ce lien ne correspond à aucun sondage. Vérifiez qu’il a été copié en entier.');
   }
   window.addEventListener('hashchange', route);
-  route();
+  authReady.then(route);
 })();
+</script>
+<script type="module">
+// Connexion par Firebase Authentication. Ces valeurs sont publiques : elles désignent le projet Firebase, rien de plus.
+const SDK = 'https://www.gstatic.com/firebasejs/13.1.0/';
+const LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const CONFIG = LOCAL
+  ? { apiKey: 'demo-cle-locale', authDomain: 'localhost', projectId: 'demo-omq' } // émulateur local : npm run auth:local
+  : {
+      apiKey: 'AIzaSyCWEeqOLSoIuYSICVr7heOH1mQMI3VWdt8',
+      authDomain: 'on-mange-quand-5a00a.firebaseapp.com',
+      projectId: 'on-mange-quand-5a00a',
+      appId: '1:704019232045:web:0f4fab0151c054cd498fa4',
+    };
+
+const MESSAGES = {
+  'auth/invalid-credential': 'E-mail ou mot de passe incorrect.',
+  'auth/invalid-login-credentials': 'E-mail ou mot de passe incorrect.',
+  'auth/wrong-password': 'Mot de passe incorrect.',
+  'auth/user-not-found': 'E-mail ou mot de passe incorrect.',
+  'auth/email-already-in-use': 'Un compte existe déjà avec cette adresse. Connectez-vous, ou utilisez « Mot de passe oublié ».',
+  'auth/weak-password': 'Mot de passe trop court : 6 caractères minimum.',
+  'auth/invalid-email': 'Adresse e-mail invalide.',
+  'auth/missing-password': 'Indiquez votre mot de passe.',
+  'auth/too-many-requests': 'Trop de tentatives. Réessayez dans quelques minutes.',
+  'auth/popup-blocked': 'La fenêtre Google a été bloquée. Autorisez les fenêtres pop-up pour ce site, puis réessayez.',
+  'auth/network-request-failed': 'Connexion impossible. Vérifiez votre réseau.',
+  'auth/user-disabled': 'Ce compte a été désactivé.',
+  'auth/account-exists-with-different-credential': 'Un compte existe déjà avec cette adresse : connectez-vous avec votre mot de passe.',
+  'auth/requires-recent-login': 'Par sécurité, reconnectez-vous puis réessayez.',
+  'auth/user-mismatch': 'Ce n’est pas le compte connecté. Réessayez avec le bon compte.',
+  'auth/operation-not-allowed': 'Ce mode de connexion n’est pas encore activé.',
+};
+const SILENT = ['auth/popup-closed-by-user', 'auth/cancelled-popup-request', 'auth/user-cancelled'];
+function friendly(e) {
+  const code = (e && e.code) || '';
+  const err = new Error(MESSAGES[code] || 'La connexion a échoué. Réessayez.');
+  err.code = code;
+  err.silent = SILENT.includes(code);
+  return err;
+}
+
+if (!CONFIG.apiKey) {
+  window.omqAuthDisabled();
+} else {
+  try {
+    const [{ initializeApp }, fa] = await Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js')]);
+    const a = fa.getAuth(initializeApp(CONFIG));
+    a.languageCode = 'fr';
+    if (LOCAL) fa.connectAuthEmulator(a, 'http://127.0.0.1:9099', { disableWarnings: true });
+    const google = new fa.GoogleAuthProvider();
+    google.setCustomParameters({ prompt: 'select_account' });
+    const toUser = (u) => u && {
+      uid: u.uid,
+      email: u.email || '',
+      name: u.displayName || '',
+      verified: !!u.emailVerified,
+      provider: u.providerData.some((p) => p.providerId === 'google.com') ? 'google' : 'password',
+    };
+    const guard = (fn) => async (...args) => { try { return await fn(...args); } catch (e) { throw friendly(e); } };
+    let listener = () => {};
+    window.omqAuthAttach({
+      onChange(cb) { listener = cb; fa.onAuthStateChanged(a, (u) => cb(toUser(u))); },
+      token: (force) => (a.currentUser ? a.currentUser.getIdToken(!!force) : Promise.resolve(null)),
+      signIn: guard((email, password) => fa.signInWithEmailAndPassword(a, email, password)),
+      signUp: guard(async (name, email, password) => {
+        const { user } = await fa.createUserWithEmailAndPassword(a, email, password);
+        if (name) await fa.updateProfile(user, { displayName: name });
+        fa.sendEmailVerification(user).catch(() => {});
+        listener(toUser(user)); // le prénom vient d'être ajouté : on prévient la page
+      }),
+      google: guard(() => fa.signInWithPopup(a, google)),
+      reset: guard((email) => fa.sendPasswordResetEmail(a, email)),
+      verify: guard(() => fa.sendEmailVerification(a.currentUser)),
+      logout: () => fa.signOut(a),
+      reauth: guard(async (password) => {
+        const u = a.currentUser;
+        if (u.providerData.some((p) => p.providerId === 'password')) {
+          await fa.reauthenticateWithCredential(u, fa.EmailAuthProvider.credential(u.email, password));
+        } else {
+          await fa.reauthenticateWithPopup(u, google);
+        }
+      }),
+      remove: guard(() => fa.deleteUser(a.currentUser)),
+    });
+  } catch (e) {
+    console.error('Connexion indisponible :', e);
+    window.omqAuthDisabled();
+  }
+}
 </script>
 </body>
 </html>

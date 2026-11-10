@@ -1,15 +1,21 @@
 // Serveur de « On mange quand ? » : sert la page (public/) et une petite API de sondages.
 //
-//   POST   /api/polls                  créer un sondage
-//   GET    /api/polls/:id              lire un sondage et ses réponses
-//   PUT    /api/polls/:id/answers      ajouter ou modifier une réponse { name, ans, note?, prev? }
-//   DELETE /api/polls/:id/answers      supprimer une réponse { name }
-//   PUT    /api/polls/:id/final        choisir le créneau final { i } (-1 pour annuler)
-//   PUT    /api/polls/:id              modifier les réglages (organisateur)
-//   DELETE /api/polls/:id              supprimer le sondage (organisateur)
+//   POST   /api/polls                     créer un sondage (organisateur = compte connecté, s'il y en a un)
+//   GET    /api/polls/:id                 lire un sondage et ses réponses
+//   PUT    /api/polls/:id/answers         ajouter ou modifier une réponse { name, ans, note?, prev?, slotsKey? }
+//   DELETE /api/polls/:id/answers         supprimer une réponse { name }
+//   PUT    /api/polls/:id/final           choisir le créneau final { i } (-1 pour annuler)
+//   PUT    /api/polls/:id                 modifier les réglages (organisateur)
+//   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (organisateur)
+//   DELETE /api/polls/:id                 supprimer le sondage (organisateur)
 //   GET    /api/polls/:id/evenement.ics   le créneau choisi, à ajouter dans un agenda
+//   GET    /api/me/polls                  les sondages du compte connecté
+//   DELETE /api/me                        détacher le compte de ses sondages et réponses (avant sa suppression)
 //
-// En-tête envoyé par la page de l'organisateur : x-admin-token (son lien secret).
+// Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.
+// Sans compte, tout reste possible : le compte ne sert qu'à organiser et à protéger ses réponses.
+
+import { verifyIdToken } from './auth.js';
 
 const MAX_DAYS = 92;
 const MAX_SLOTS = 200;
@@ -151,90 +157,126 @@ async function readBody(request) {
   throw new HttpError(400, 'Requête invalide.');
 }
 
-/* ---------- Droits de l'organisateur ---------- */
-const TOKEN_RE = /^[a-z2-7]{20,64}$/;
-function newToken() {
-  const bytes = new Uint8Array(20);
-  crypto.getRandomValues(bytes);
-  let token = '';
-  for (const b of bytes) token += B32[b & 31];
-  return token;
-}
-async function sha256(text) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-// Jeton envoyé par la page dans un en-tête, réduit à son empreinte ; null s'il est absent ou mal formé.
-async function tokenHash(request, header) {
-  const token = request.headers.get(header) || '';
-  return TOKEN_RE.test(token) ? sha256(token) : null;
-}
+/* ---------- Comptes et droits ---------- */
 // Les réglages qui fixent la liste des créneaux. La page les renvoie pour prouver qu'elle est à jour.
 const slotsKey = (cfg) => [cfg.s, cfg.e, cfg.m.join('.'), cfg.x.join('.')].join('|');
 
+// Compte connecté (jeton Firebase vérifié), ou null. Un jeton invalide renvoie 401 pour que la page se reconnecte.
+async function currentUser(request, env, url) {
+  const match = /^Bearer\s+(\S+)$/.exec(request.headers.get('authorization') || '');
+  if (!match || !env.FIREBASE_PROJECT_ID) return null;
+  // Les jetons non signés de l'émulateur ne sont acceptés qu'en local, et seulement si « npm run dev » l'a demandé.
+  const local = env.AUTH_EMULATOR_LOCAL_ONLY === '1' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+  const user = await verifyIdToken(match[1], env.FIREBASE_PROJECT_ID, { allowUnsigned: local });
+  if (!user) throw new HttpError(401, 'Votre session a expiré. Reconnectez-vous.');
+  return user;
+}
+
 async function loadPoll(env, id) {
-  const row = await env.DB.prepare('SELECT id, config, final_idx, admin_hash FROM polls WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed FROM polls WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   return row;
 }
 
-// Les réponses restent modifiables par tous. Seul l'organisateur choisit la date, modifie ou supprime le sondage.
-// Sans organisateur (sondages créés avant), tout le monde peut tout faire, comme avant.
-async function whoAsks(request, row) {
-  const org = !!row.admin_hash;
-  return { org, admin: org && (await tokenHash(request, 'x-admin-token')) === row.admin_hash };
+// Règles :
+// - sondage sans organisateur (créé sans compte) : tout le monde peut tout faire, sauf modifier les réglages ou supprimer ;
+// - sondage avec organisateur : lui seul choisit la date, modifie, clôture ou supprime ;
+//   une réponse donnée en étant connecté n'est modifiable que par son auteur ou l'organisateur ;
+// - sondage clôturé : plus personne ne modifie les réponses, sauf l'organisateur.
+const isOwner = (row, user) => !!(row.owner_uid && user && row.owner_uid === user.uid);
+function canEditAnswer(row, user, answer) {
+  if (isOwner(row, user)) return true;
+  if (row.closed) return false;
+  if (!row.owner_uid || !answer || !answer.uid) return true;
+  return !!user && answer.uid === user.uid;
 }
 
-async function pollResponse(env, row, who) {
+async function pollResponse(env, row, user) {
   const { results } = await env.DB
-    .prepare('SELECT name, ans, updated_at, note FROM answers WHERE poll_id = ? ORDER BY created_at, name_key')
+    .prepare('SELECT name, ans, updated_at, note, uid FROM answers WHERE poll_id = ? ORDER BY created_at, name_key')
     .bind(row.id)
     .all();
   return {
     i: row.id,
     ...JSON.parse(row.config),
     f: row.final_idx ?? -1,
-    org: who.org,
-    admin: who.admin,
-    p: results.map((r) => [r.name, r.ans, r.updated_at, r.note]),
+    owned: !!row.owner_uid,
+    isOwner: isOwner(row, user),
+    closed: !!row.closed,
+    p: results.map((r) => [r.name, r.ans, r.updated_at, r.note, canEditAnswer(row, user, r), !!user && r.uid === user.uid]),
   };
 }
 
+async function handleMe(request, env, url, parts) {
+  const user = await currentUser(request, env, url);
+  if (!user) throw new HttpError(401, 'Connectez-vous pour voir cette page.');
+  if (parts.length === 3 && parts[2] === 'polls' && request.method === 'GET') {
+    const { results } = await env.DB.prepare(
+      `SELECT p.id, p.config, p.updated_at, p.owner_uid = ?1 AS owner,
+              (SELECT COUNT(*) FROM answers a WHERE a.poll_id = p.id) AS answers
+         FROM polls p
+        WHERE p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1)
+        ORDER BY p.updated_at DESC
+        LIMIT 100`
+    ).bind(user.uid).all();
+    return json({
+      polls: results.map((r) => {
+        const cfg = JSON.parse(r.config);
+        return { i: r.id, t: cfg.t, s: cfg.s, e: cfg.e, owner: !!r.owner, answers: r.answers };
+      }),
+    });
+  }
+  if (parts.length === 2 && request.method === 'DELETE') {
+    // Avant la suppression du compte : ses réponses restent mais ne lui sont plus liées,
+    // ses sondages restent accessibles à leurs participants, sans organisateur ni clôture.
+    await env.DB.batch([
+      env.DB.prepare('UPDATE answers SET uid = NULL WHERE uid = ?').bind(user.uid),
+      env.DB.prepare('UPDATE polls SET owner_uid = NULL, closed = 0 WHERE owner_uid = ?').bind(user.uid),
+    ]);
+    return json({ detached: true });
+  }
+  throw new HttpError(404, 'Adresse inconnue.');
+}
+
 async function handleApi(request, env, url) {
-  const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls', id?, action?]
+  const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me', ...]
   const method = request.method;
+  if (parts[1] === 'me') return handleMe(request, env, url, parts);
   if (parts[1] !== 'polls' || parts.length > 4) throw new HttpError(404, 'Adresse inconnue.');
+  const user = await currentUser(request, env, url);
 
   if (parts.length === 2) {
     if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
     const cfg = validateConfig(await readBody(request));
     const id = newId();
-    const adminToken = newToken();
     const now = Date.now();
-    const row = { id, config: JSON.stringify(cfg), final_idx: null, admin_hash: await sha256(adminToken) };
-    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, admin_hash, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)')
-      .bind(id, row.config, row.admin_hash, now, now)
+    const row = { id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0 };
+    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)')
+      .bind(id, row.config, row.owner_uid, now, now)
       .run();
-    const who = { org: true, admin: true };
-    // Le lien organisateur n'est donné qu'une fois, à la création : le serveur n'en garde que l'empreinte.
-    return json({ ...(await pollResponse(env, row, who)), adminToken }, 201);
+    return json(await pollResponse(env, row, user), 201);
   }
 
   const id = parts[2];
   if (!ID_RE.test(id)) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   const row = await loadPoll(env, id);
-  const who = await whoAsks(request, row);
   const cfg = JSON.parse(row.config);
   const action = parts[3] || '';
   const now = Date.now();
   const touch = env.DB.prepare('UPDATE polls SET updated_at = ? WHERE id = ?').bind(now, id);
-  const needAdmin = (message) => { if (!who.admin) throw new HttpError(403, message); };
+  const ownerOnly = (message) => { if (!isOwner(row, user)) throw new HttpError(403, message); };
+  const ownerIfOwned = (message) => { if (row.owner_uid) ownerOnly(message); };
+  const notClosed = () => {
+    if (row.closed && !isOwner(row, user)) throw new HttpError(403, 'Le sondage est clôturé : les réponses ne peuvent plus changer.');
+  };
 
   if (!action) {
-    if (method === 'GET') return json(await pollResponse(env, row, who));
+    if (method === 'GET') return json(await pollResponse(env, row, user));
 
     if (method === 'PUT') {
-      needAdmin('Seul l’organisateur peut modifier le sondage.');
+      ownerOnly(row.owner_uid
+        ? 'Seul l’organisateur peut modifier le sondage.'
+        : 'Ce sondage a été créé sans compte : ses réglages ne peuvent plus être modifiés.');
       const next = validateConfig(await readBody(request));
       // Les dispos déjà données suivent leur créneau (même jour, même moment) ; celles des créneaux retirés sont perdues.
       const oldSlots = buildSlots(cfg), newSlots = buildSlots(next);
@@ -250,11 +292,13 @@ async function handleApi(request, env, url) {
         env.DB.prepare('UPDATE polls SET config = ?, final_idx = ?, updated_at = ? WHERE id = ?').bind(config, finalIdx, now, id),
         ...results.map((r) => env.DB.prepare('UPDATE answers SET ans = ? WHERE poll_id = ? AND name_key = ?').bind(remap(r.ans), id, r.name_key)),
       ]);
-      return json(await pollResponse(env, { ...row, config, final_idx: finalIdx }, who));
+      return json(await pollResponse(env, { ...row, config, final_idx: finalIdx }, user));
     }
 
     if (method === 'DELETE') {
-      needAdmin('Seul l’organisateur peut supprimer le sondage.');
+      ownerOnly(row.owner_uid
+        ? 'Seul l’organisateur peut supprimer le sondage.'
+        : 'Ce sondage a été créé sans compte : il ne peut pas être supprimé.');
       await env.DB.batch([
         env.DB.prepare('DELETE FROM answers WHERE poll_id = ?').bind(id),
         env.DB.prepare('DELETE FROM polls WHERE id = ?').bind(id),
@@ -265,6 +309,7 @@ async function handleApi(request, env, url) {
   }
 
   if (action === 'answers' && method === 'PUT') {
+    notClosed();
     const body = await readBody(request);
     if (body.slotsKey != null && body.slotsKey !== slotsKey(cfg)) {
       throw new HttpError(409, 'L’organisateur vient de modifier les dates du sondage. Rechargez la page, puis cochez à nouveau vos dispos.');
@@ -278,37 +323,60 @@ async function handleApi(request, env, url) {
     const key = norm(name);
     const prevKey = body.prev ? norm(cleanText(body.prev, 40)) : '';
     const renamed = prevKey && prevKey !== key;
-    const exists = await env.DB.prepare('SELECT 1 AS x FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key).first();
-    if (!exists) {
-      const { c } = await env.DB.prepare('SELECT COUNT(*) AS c FROM answers WHERE poll_id = ?').bind(id).first();
-      if (c - (renamed ? 1 : 0) >= MAX_PEOPLE) throw new HttpError(409, `Le sondage est complet (${MAX_PEOPLE} personnes maximum).`);
+    const find = (k) => env.DB.prepare('SELECT uid FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, k).first();
+    const target = await find(key);
+    const previous = renamed ? await find(prevKey) : null;
+    if (target && !canEditAnswer(row, user, target)) {
+      throw new HttpError(403, `${name} a répondu avec son compte : seul ${name} ou l’organisateur peut modifier cette réponse. Ajoutez une initiale pour vous distinguer.`);
     }
+    if (previous && !canEditAnswer(row, user, previous)) {
+      throw new HttpError(403, 'Seule la personne qui a donné cette réponse, ou l’organisateur, peut la modifier.');
+    }
+    if (!target) {
+      const { c } = await env.DB.prepare('SELECT COUNT(*) AS c FROM answers WHERE poll_id = ?').bind(id).first();
+      if (c - (previous ? 1 : 0) >= MAX_PEOPLE) throw new HttpError(409, `Le sondage est complet (${MAX_PEOPLE} personnes maximum).`);
+    }
+    // Une réponse garde son auteur ; une nouvelle réponse est liée au compte connecté, s'il y en a un.
+    const author = previous ? previous.uid : target ? target.uid : user ? user.uid : null;
     const statements = [];
-    if (renamed) statements.push(env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, prevKey));
+    if (previous) statements.push(env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, prevKey));
     statements.push(
       env.DB.prepare(
-        `INSERT INTO answers (poll_id, name_key, name, ans, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (poll_id, name_key) DO UPDATE SET name = excluded.name, ans = excluded.ans, note = excluded.note, updated_at = excluded.updated_at`
-      ).bind(id, key, name, ans.padEnd(slots, '0'), note, now, now),
+        `INSERT INTO answers (poll_id, name_key, name, ans, note, uid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (poll_id, name_key) DO UPDATE SET name = excluded.name, ans = excluded.ans, note = excluded.note,
+           uid = excluded.uid, updated_at = excluded.updated_at`
+      ).bind(id, key, name, ans.padEnd(slots, '0'), note, author ?? null, now, now),
       touch
     );
     await env.DB.batch(statements);
-    return json(await pollResponse(env, row, who));
+    return json(await pollResponse(env, row, user));
   }
 
   if (action === 'answers' && method === 'DELETE') {
+    notClosed();
     const key = norm(cleanText((await readBody(request)).name, 40));
     if (!key) throw new HttpError(400, 'Réponse à supprimer introuvable.');
+    const target = await env.DB.prepare('SELECT uid FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key).first();
+    if (target && !canEditAnswer(row, user, target)) {
+      throw new HttpError(403, 'Seule la personne qui a donné cette réponse, ou l’organisateur, peut la supprimer.');
+    }
     await env.DB.batch([env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key), touch]);
-    return json(await pollResponse(env, row, who));
+    return json(await pollResponse(env, row, user));
   }
 
   if (action === 'final' && method === 'PUT') {
-    if (who.org) needAdmin('Seul l’organisateur peut choisir la date finale.');
+    ownerIfOwned('Seul l’organisateur peut choisir la date finale.');
     const i = Number((await readBody(request)).i);
     const finalIdx = Number.isInteger(i) && i >= 0 && i < slotCount(cfg) ? i : null;
     await env.DB.prepare('UPDATE polls SET final_idx = ?, updated_at = ? WHERE id = ?').bind(finalIdx, now, id).run();
-    return json(await pollResponse(env, { ...row, final_idx: finalIdx }, who));
+    return json(await pollResponse(env, { ...row, final_idx: finalIdx }, user));
+  }
+
+  if (action === 'closed' && method === 'PUT') {
+    ownerOnly('Seul l’organisateur peut clôturer le sondage.');
+    const closed = (await readBody(request)).closed ? 1 : 0;
+    await env.DB.prepare('UPDATE polls SET closed = ?, updated_at = ? WHERE id = ?').bind(closed, now, id).run();
+    return json(await pollResponse(env, { ...row, closed }, user));
   }
 
   if (action === 'evenement.ics' && method === 'GET') {
