@@ -1,38 +1,41 @@
 # On mange quand ?
 
-Sondage de dispos sans compte pour fixer la date d'un repas.
+Sondage de dispos pour fixer la date d'un repas. Tout fonctionne sans compte ; un compte, facultatif, donne les droits d'organisateur.
 
 - **Prod : https://on-mange-quand.on-mange-quand.workers.dev**
 - **Test : https://on-mange-quand-test.on-mange-quand.workers.dev** (sa propre base, pour essayer les nouveautés)
 
 ## Comment ça marche
 
-1. L'organisateur choisit la période, les moments (journée, matin, midi, après-midi, soir) et les jours possibles, puis crée le sondage.
-2. Il reçoit deux liens : celui du groupe, à envoyer une seule fois, et son **lien organisateur**, à garder pour lui.
+1. On choisit la période, les moments (journée, matin, midi, après-midi, soir) et les jours possibles, puis on crée le sondage. Si on est connecté, on en devient l'**organisateur**.
+2. On envoie le lien au groupe, une seule fois.
 3. Chacun entre son prénom, coche ses créneaux (une fois = dispo, deux fois = si besoin) et peut laisser un petit mot.
-4. Le meilleur créneau s'affiche en haut. L'organisateur le valide ; chacun peut alors l'ajouter à son agenda.
+4. Le meilleur créneau s'affiche en haut. Une fois la date choisie, chacun peut l'ajouter à son agenda.
 
-Personne ne crée de compte.
+### Comptes
+
+Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à organiser, à protéger ses réponses et à retrouver ses sondages (« Mon compte »). La page « Confidentialité » explique ce qui est conservé, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
 
 ### Qui peut faire quoi
 
-| | Participant | Organisateur |
+| | Sondage créé sans compte | Sondage avec organisateur |
 |---|---|---|
-| Répondre | oui | oui |
-| Modifier ou supprimer une réponse (en touchant le prénom) | oui, toutes | oui, toutes |
-| Choisir la date finale | non | oui |
-| Modifier les réglages, supprimer le sondage | non | oui |
+| Répondre | tout le monde | tout le monde (sauf s'il est clôturé) |
+| Modifier une réponse | tout le monde | une réponse donnée sans compte : tout le monde ; avec un compte : son auteur et l'organisateur |
+| Choisir la date finale | tout le monde | l'organisateur |
+| Modifier les réglages, clôturer, supprimer | personne | l'organisateur |
 
-Le lien organisateur fonctionne sur n'importe quel appareil. Le serveur n'en garde qu'une empreinte : s'il est perdu, il ne peut pas être retrouvé.
-
-Les sondages créés avant l'arrivée du lien organisateur n'ont pas d'organisateur : tout le monde garde tous les droits dessus.
+Les sondages créés avant l'arrivée des comptes sont des sondages sans organisateur.
 
 ## Organisation du code
 
 | Chemin | Rôle |
 |---|---|
 | `public/index.html` | La page (HTML, CSS et JavaScript, sans dépendance) |
-| `src/worker.js` | Le serveur : sert la page et l'API `/api/polls` |
+| `src/worker.js` | Le serveur : sert la page et l'API (`/api/polls`, `/api/me`) |
+| `src/auth.js` | Vérification des jetons de connexion Firebase |
+| `tests/` | Tests (`npm test`) |
+| `firebase.json` | Réglages de l'émulateur de connexion local |
 | `migrations/` | Structure de la base de données (Cloudflare D1) |
 | `wrangler.jsonc` | Configuration Cloudflare, prod et test |
 | `scripts/garde-fou-prod.mjs` | Bloque toute mise à jour de la prod en dehors de `main` |
@@ -53,10 +56,15 @@ Une nouveauté part de `develop` sur sa propre branche, y revient une fois prêt
 ```bash
 npm install
 npm run db:local
-npm run dev
+npm run auth:local    # dans un premier terminal : émulateur de connexion Firebase
+npm run dev           # dans un second terminal
 ```
 
-La page s'ouvre sur http://localhost:8787 avec une base de données locale.
+La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests de la vérification des connexions.
+
+## Brancher Firebase
+
+Le projet Firebase se renseigne à deux endroits : `CONFIG` dans le module en bas de `public/index.html` (valeurs publiques du bloc `firebaseConfig`) et `FIREBASE_PROJECT_ID` dans `wrangler.jsonc` (prod et test). Tant qu'ils sont vides, l'app fonctionne sans comptes. Chaque adresse du site doit figurer dans les « Domaines autorisés » de Firebase Authentication.
 
 ## Mettre en ligne la version de test
 
