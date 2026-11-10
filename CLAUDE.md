@@ -36,6 +36,8 @@ Règles partagées par la page et le serveur, à garder identiques des deux côt
 
 Droits (fonctions `isOwner` et `canEditAnswer` du serveur) : un sondage créé en étant connecté a un organisateur (`owner_uid`), qui seul choisit la date, modifie, clôture ou supprime. Une réponse donnée en étant connecté (`answers.uid`) n'est modifiable que par son auteur ou l'organisateur ; une réponse sans compte, par tous. Un sondage sans organisateur (créé sans compte, ou d'avant les comptes) reste ouvert à tous, sauf réglages et suppression. La page envoie le jeton Firebase en `Authorization: Bearer`.
 
+Agenda : la comparaison avec Google Agenda se fait entièrement dans la page (Google Identity Services, accès `calendar.freebusy`, rien ne passe par le serveur) ; `GOOGLE_CLIENT_ID` est le client OAuth Web du projet Firebase, réglages Google Cloud décrits dans le README. Le lien d'agenda (`feeds` : un jeton secret par compte) sert `/api/agenda/<jeton>.ics` sans connexion ; il liste les repas décidés où le compte organise ou a répondu dispo ou si besoin (`accountPolls`, même règle que les dates de `/api/me/polls`). Supprimer le compte efface son lien.
+
 Code d'accès (`polls.pin`, en clair pour que l'organisateur le retrouve) : seul un organisateur connecté peut le poser. Sans lui, toute route `/api/polls/:id…` répond 403 `{ pin: true }`, sauf pour l'organisateur. `POST /api/polls/:id/pin` vérifie le code et pose un cookie HttpOnly `omq_pin_<id>` (empreinte du code, limité au chemin du sondage, donc valable aussi pour le fichier `.ics`). Les essais sont comptés dans `pin_tries` (5 par 15 minutes, par sondage et empreinte d'IP) avant la comparaison, pour que des essais en parallèle ne passent pas.
 
 ## Git

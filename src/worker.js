@@ -10,8 +10,12 @@
 //   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (organisateur)
 //   DELETE /api/polls/:id                 supprimer le sondage (organisateur)
 //   GET    /api/polls/:id/evenement.ics   le créneau choisi, à ajouter dans un agenda
-//   GET    /api/me/polls                  les sondages du compte connecté
+//   GET    /api/me/polls                  les sondages du compte connecté (avec la date choisie, pour signaler les conflits)
+//   GET    /api/me/agenda                 le lien d'agenda personnel du compte ({ url } ou { url: null })
+//   POST   /api/me/agenda                 créer le lien d'agenda, ou le remplacer par un nouveau
+//   DELETE /api/me/agenda                 désactiver le lien d'agenda
 //   DELETE /api/me                        détacher le compte de ses sondages et réponses (avant sa suppression)
+//   GET    /api/agenda/:token.ics         le lien d'agenda : les repas décidés du compte (sans connexion, le jeton suffit)
 //
 // Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.
 // Sans compte, tout reste possible : le compte ne sert qu'à organiser et à protéger ses réponses.
@@ -28,6 +32,7 @@ const MAX_BODY = 20000;
 const MOMENT_HOURS = [null, ['0900', '1200'], ['1200', '1430'], ['1400', '1800'], ['1930', '2300']];
 const DAY_MS = 86400000;
 const ID_RE = /^[a-z2-7]{10}$/;
+const FEED_FILE_RE = /^([a-z2-7]{32})\.ics$/; // adresse du lien d'agenda : jeton secret + .ics
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const PIN_RE = /^\d{4,6}$/;
 const PIN_MAX_TRIES = 5; // essais de code par sondage et par adresse IP…
@@ -48,8 +53,8 @@ const json = (data, status = 200) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });
 
-function newId() {
-  const bytes = new Uint8Array(10);
+function newId(length = 10) {
+  const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   let id = '';
   for (const b of bytes) id += B32[b & 31];
@@ -110,28 +115,39 @@ const PARIS_TZ = [
   'BEGIN:STANDARD', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD',
   'END:VTIMEZONE',
 ];
-function buildIcs(id, cfg, slot, pollUrl) {
+const icsStamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+// Un repas décidé. L'identifiant ne dépend que du sondage : si la date change, l'agenda déplace le même événement.
+function icsEvent(id, cfg, slot, pollUrl, stampMs) {
   const day = ymdOf(slot.d);
   const hours = MOMENT_HOURS[slot.t];
   const when = hours
     ? [`DTSTART;TZID=Europe/Paris:${day}T${hours[0]}00`, `DTEND;TZID=Europe/Paris:${day}T${hours[1]}00`]
     : [`DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${ymdOf(slot.d + 1)}`];
   const details = (cfg.n ? cfg.n + '\n\n' : '') + 'Horaires indicatifs. Sondage : ' + pollUrl;
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//On mange quand//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-    ...(hours ? PARIS_TZ : []),
+  return [
     'BEGIN:VEVENT',
     `UID:${id}@on-mange-quand`,
-    `DTSTAMP:${stamp}`,
+    `DTSTAMP:${icsStamp(stampMs)}`,
     ...when,
     `SUMMARY:${icsText(cfg.t)}`,
     `DESCRIPTION:${icsText(details)}`,
     `URL:${pollUrl}`,
-    'END:VEVENT', 'END:VCALENDAR',
+    'END:VEVENT',
+  ];
+}
+// Fichier agenda complet. extra : en-têtes du lien d'agenda (nom, fréquence de mise à jour).
+function icsCalendar(events, extra = []) {
+  const timed = events.some((ev) => ev.some((l) => l.startsWith('DTSTART;TZID')));
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//On mange quand//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    ...extra,
+    ...(timed ? PARIS_TZ : []),
+    ...events.flat(),
+    'END:VCALENDAR',
   ];
   return lines.map(foldLine).join('\r\n') + '\r\n';
 }
+const buildIcs = (id, cfg, slot, pollUrl) => icsCalendar([icsEvent(id, cfg, slot, pollUrl, Date.now())]);
 const fileSlug = (t) => norm(t).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'repas';
 
 function validateConfig(b) {
@@ -289,41 +305,97 @@ async function pollJson(env, request, url, row, user, status = 200) {
   return res;
 }
 
+// Sondages d'un compte (organisés ou répondus), avec le créneau choisi et s'il y participe :
+// l'organisateur toujours ; sinon il faut qu'une réponse du compte soit « dispo » ou « si besoin » sur ce créneau.
+async function accountPolls(env, uid) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.id, p.config, p.final_idx, p.updated_at, p.owner_uid = ?1 AS owner,
+            (SELECT COUNT(*) FROM answers a WHERE a.poll_id = p.id) AS answers,
+            (SELECT GROUP_CONCAT(a.ans) FROM answers a WHERE a.poll_id = p.id AND a.uid = ?1) AS mine
+       FROM polls p
+      WHERE p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1)
+      ORDER BY p.updated_at DESC
+      LIMIT 100`
+  ).bind(uid).all();
+  return results.map((r) => {
+    const cfg = JSON.parse(r.config);
+    const slot = r.final_idx == null ? null : buildSlots(cfg)[r.final_idx] || null;
+    const yes = String(r.mine || '').split(',').some((ans) => ans[r.final_idx] === '1' || ans[r.final_idx] === '2');
+    return { id: r.id, cfg, owner: !!r.owner, answers: r.answers, updated: r.updated_at, slot, going: !!slot && (!!r.owner || yes) };
+  });
+}
+
 async function handleMe(request, env, url, parts) {
   const user = await currentUser(request, env, url);
   if (!user) throw new HttpError(401, 'Connectez-vous pour voir cette page.');
-  if (parts.length === 3 && parts[2] === 'polls' && request.method === 'GET') {
-    const { results } = await env.DB.prepare(
-      `SELECT p.id, p.config, p.updated_at, p.owner_uid = ?1 AS owner,
-              (SELECT COUNT(*) FROM answers a WHERE a.poll_id = p.id) AS answers
-         FROM polls p
-        WHERE p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1)
-        ORDER BY p.updated_at DESC
-        LIMIT 100`
-    ).bind(user.uid).all();
+  const method = request.method;
+  if (parts.length === 3 && parts[2] === 'polls' && method === 'GET') {
+    // fd, ft : jour et moment choisis, quand le compte y participe (la page s'en sert pour signaler les conflits).
     return json({
-      polls: results.map((r) => {
-        const cfg = JSON.parse(r.config);
-        return { i: r.id, t: cfg.t, s: cfg.s, e: cfg.e, owner: !!r.owner, answers: r.answers };
-      }),
+      polls: (await accountPolls(env, user.uid)).map((p) => ({
+        i: p.id, t: p.cfg.t, s: p.cfg.s, e: p.cfg.e, owner: p.owner, answers: p.answers,
+        ...(p.going ? { fd: ymdOf(p.slot.d), ft: p.slot.t } : {}),
+      })),
     });
   }
-  if (parts.length === 2 && request.method === 'DELETE') {
+  if (parts.length === 3 && parts[2] === 'agenda') {
+    const feedUrl = (token) => (token ? `${url.origin}/api/agenda/${token}.ics` : null);
+    if (method === 'GET') {
+      const row = await env.DB.prepare('SELECT token FROM feeds WHERE uid = ?').bind(user.uid).first();
+      return json({ url: feedUrl(row && row.token) });
+    }
+    if (method === 'POST') {
+      // Un nouveau jeton remplace l'ancien : l'ancien lien cesse aussitôt de marcher.
+      const token = newId(32);
+      await env.DB.prepare(
+        'INSERT INTO feeds (uid, token, created_at) VALUES (?, ?, ?) ON CONFLICT (uid) DO UPDATE SET token = excluded.token, created_at = excluded.created_at'
+      ).bind(user.uid, token, Date.now()).run();
+      return json({ url: feedUrl(token) });
+    }
+    if (method === 'DELETE') {
+      await env.DB.prepare('DELETE FROM feeds WHERE uid = ?').bind(user.uid).run();
+      return json({ url: null });
+    }
+  }
+  if (parts.length === 2 && method === 'DELETE') {
     // Avant la suppression du compte : ses réponses restent mais ne lui sont plus liées,
     // ses sondages restent accessibles à leurs participants, sans organisateur ni clôture.
     await env.DB.batch([
       env.DB.prepare('UPDATE answers SET uid = NULL WHERE uid = ?').bind(user.uid),
       env.DB.prepare('UPDATE polls SET owner_uid = NULL, closed = 0 WHERE owner_uid = ?').bind(user.uid),
+      env.DB.prepare('DELETE FROM feeds WHERE uid = ?').bind(user.uid),
     ]);
     return json({ detached: true });
   }
   throw new HttpError(404, 'Adresse inconnue.');
 }
 
+// Lien d'agenda : lu par les applications d'agenda, sans connexion. Le jeton secret de l'adresse désigne le compte.
+async function handleFeed(request, env, url, parts) {
+  const match = parts.length === 3 && (request.method === 'GET' || request.method === 'HEAD') ? FEED_FILE_RE.exec(parts[2]) : null;
+  if (!match) throw new HttpError(404, 'Adresse inconnue.');
+  const row = await env.DB.prepare('SELECT uid FROM feeds WHERE token = ?').bind(match[1]).first();
+  if (!row) throw new HttpError(404, 'Ce lien d’agenda n’existe plus. Créez-en un nouveau dans « Mon compte ».');
+  const events = (await accountPolls(env, row.uid))
+    .filter((p) => p.going)
+    .map((p) => icsEvent(p.id, p.cfg, p.slot, `${url.origin}/#${p.id}`, p.updated));
+  const body = icsCalendar(events, [
+    'X-WR-CALNAME:Repas · On mange quand ?',
+    'X-WR-TIMEZONE:Europe/Paris',
+    // Indication pour les agendas qui la suivent (Apple, Outlook) ; Google Agenda choisit son propre rythme.
+    'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
+    'X-PUBLISHED-TTL:PT1H',
+  ]);
+  return new Response(request.method === 'HEAD' ? null : body, {
+    headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store' },
+  });
+}
+
 async function handleApi(request, env, url) {
-  const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me', ...]
+  const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me' | 'agenda', ...]
   const method = request.method;
   if (parts[1] === 'me') return handleMe(request, env, url, parts);
+  if (parts[1] === 'agenda') return handleFeed(request, env, url, parts);
   if (parts[1] !== 'polls' || parts.length > 4) throw new HttpError(404, 'Adresse inconnue.');
   const user = await currentUser(request, env, url);
   const reply = (r, status) => pollJson(env, request, url, r, user, status);

@@ -9,8 +9,8 @@ Sondage de dispos pour fixer la date d'un repas. Tout fonctionne sans compte ; u
 
 1. On choisit la période, les moments (journée, matin, midi, après-midi, soir) et les jours possibles, puis on crée le sondage. Les **jours fériés** de la période sont signalés : s'ils tombent en dehors des jours choisis (en semaine quand on a choisi « Week-end », par exemple), on peut les ajouter d'un geste. Si on est connecté, on devient l'**organisateur** et on peut protéger le lien par un **code d'accès** (4 à 6 chiffres).
 2. On envoie le lien au groupe, une seule fois (et le code, s'il y en a un).
-3. Chacun entre son prénom, coche ses créneaux (une fois = dispo, deux fois = si besoin) et peut laisser un petit mot.
-4. Le meilleur créneau s'affiche en haut. Une fois la date choisie, chacun peut l'ajouter à son agenda.
+3. Chacun entre son prénom, coche ses créneaux (une fois = dispo, deux fois = si besoin) et peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les repas déjà décidés dans ses autres sondages.
+4. Le meilleur créneau s'affiche en haut. Une fois la date choisie, chacun peut l'ajouter à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
 
 ### Comptes
 
@@ -32,6 +32,11 @@ Les sondages créés avant l'arrivée des comptes sont des sondages sans organis
 ### Code d'accès
 
 Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perdu : l'organisateur le retrouve sur la page du sondage. Une fois le bon code saisi, le navigateur garde un cookie propre au sondage ; si l'organisateur change le code, chacun doit saisir le nouveau. Après 5 essais en 15 minutes depuis une même adresse IP, les essais sont bloqués jusqu'à la fin de ces 15 minutes.
+
+### Agenda
+
+- **Comparer avec mon agenda Google** : Google ne donne au navigateur que les plages occupées de l'agenda principal, sur la période du sondage. La comparaison se fait dans le navigateur, rien n'est envoyé au serveur. Un créneau est « pris » si une plage occupée chevauche ses horaires indicatifs (8 h – 23 h pour « Journée »).
+- **Lien d'agenda** : une adresse secrète par compte (`/api/agenda/<jeton>.ics`) à ajouter une fois dans Google Agenda, Apple Calendrier ou Outlook. Elle contient les repas décidés que le compte organise, ou où il a répondu dispo (ou si besoin) à la date retenue. On peut la changer ou la désactiver dans « Mon compte ». Google Agenda la relit toutes les quelques heures.
 
 ## Organisation du code
 
@@ -71,6 +76,16 @@ La page s'ouvre sur http://localhost:8787 avec une base de données locale. En l
 ## Brancher Firebase
 
 Le projet Firebase se renseigne à deux endroits : `CONFIG` dans le module en bas de `public/index.html` (valeurs publiques du bloc `firebaseConfig`) et `FIREBASE_PROJECT_ID` dans `wrangler.jsonc` (prod et test). Tant qu'ils sont vides, l'app fonctionne sans comptes. Chaque adresse du site doit figurer dans les « Domaines autorisés » de Firebase Authentication.
+
+## Brancher l'agenda Google
+
+Le bouton « Comparer avec mon agenda Google » utilise le client OAuth Web du projet Firebase (`GOOGLE_CLIENT_ID` dans `public/index.html` ; vide = bouton masqué). Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
+
+1. **API et services → Bibliothèque** : activer **Google Calendar API**.
+2. **Google Auth Platform → Accès aux données** : ajouter le niveau d'accès `https://www.googleapis.com/auth/calendar.freebusy` (lecture des disponibilités seulement).
+3. **Google Auth Platform → Clients** → « Web client (auto created by Google Service) » → **Origines JavaScript autorisées** : ajouter `https://on-mange-quand-test.on-mange-quand.workers.dev`, `https://on-mange-quand.on-mange-quand.workers.dev` et `http://localhost:8787`.
+
+Si Google classe cet accès comme « sensible » et que l'application n'est pas validée par Google, un écran « application non validée » s'affiche avant l'accord, et 100 personnes au plus peuvent l'autoriser.
 
 ## Mettre en ligne la version de test
 
