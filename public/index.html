@@ -30,6 +30,8 @@
   --maybe: #9A6200;
   --maybe-soft: #FAEBCB;
   --danger: #B93228;
+  --hol: #AD2D66;
+  --hol-soft: #FBE8F1;
   --slate: #232A30;
   --chalk: #F1EFE7;
   --chalk-dim: #A9B1B7;
@@ -47,6 +49,7 @@
     --paper: #0F131A; --surface: #171D26; --ink: #E7EBF2; --muted: #9AA4B5; --line: #2A3342;
     --accent: #87A4FF; --accent-ink: #0D1530; --accent-soft: #1E2944; --ging: rgba(135, 164, 255, 0.24);
     --yes: #55C98A; --yes-soft: #163726; --maybe: #E9B24D; --maybe-soft: #3A2C10; --danger: #F07A6E;
+    --hol: #F28DBB; --hol-soft: #3A1828;
     --slate: #0A0E12; --chalk: #F1EFE7; --chalk-dim: #9AA3AA; --chalk-line: rgba(241, 239, 231, 0.15);
     --shadow: none; color-scheme: dark;
   }
@@ -55,6 +58,7 @@
   --paper: #0F131A; --surface: #171D26; --ink: #E7EBF2; --muted: #9AA4B5; --line: #2A3342;
   --accent: #87A4FF; --accent-ink: #0D1530; --accent-soft: #1E2944; --ging: rgba(135, 164, 255, 0.24);
   --yes: #55C98A; --yes-soft: #163726; --maybe: #E9B24D; --maybe-soft: #3A2C10; --danger: #F07A6E;
+  --hol: #F28DBB; --hol-soft: #3A1828;
   --slate: #0A0E12; --chalk: #F1EFE7; --chalk-dim: #9AA3AA; --chalk-line: rgba(241, 239, 231, 0.15);
   --shadow: none; color-scheme: dark;
 }
@@ -158,6 +162,21 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
 .cd.ex { border: 1.5px dashed var(--line); text-decoration: line-through; cursor: pointer; }
 .dots { display: flex; gap: 2px; }
 .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+/* Jours fériés : cerclés de framboise ; hors des jours choisis, en pointillés et touchables pour les ajouter */
+.cd.hol { color: var(--hol); border-color: var(--hol); }
+.cd.hol.off { opacity: 1; border-style: dashed; cursor: pointer; font-weight: 600; }
+.hols { display: flex; flex-direction: column; gap: 8px; background: var(--hol-soft); border-radius: 10px; padding: 10px 12px; font-size: 0.88rem; }
+.hols.todo { outline: 1.5px dashed var(--hol); outline-offset: -1.5px; }
+.hols b { color: var(--hol); font-weight: 700; }
+.hols .hol-act { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.hols .mini { border-color: var(--hol); color: var(--hol); background: var(--surface); }
+.hol-name { display: block; font-size: 0.75rem; font-weight: 600; color: var(--hol); }
+.hol-txt { color: var(--hol); font-weight: 600; }
+.nowrap { white-space: nowrap; }
+/* Code d'accès */
+.code-input { font-variant-numeric: tabular-nums; letter-spacing: 0.3em; max-width: 12rem; }
+.code-input.big { font-size: 1.5rem; text-align: center; max-width: none; }
+.code { font-variant-numeric: tabular-nums; letter-spacing: 0.12em; }
 
 /* Boutons */
 .btn {
@@ -423,6 +442,32 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   const fmt = (f, d) => f.format(new Date(d * DAY_MS));
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
+  /* ---------- Jours fériés (France métropolitaine) ---------- */
+  // Dimanche de Pâques (calcul grégorien de Meeus), en jours depuis 1970.
+  function easter(y) {
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const n = h + l - 7 * m + 114;
+    return Date.UTC(y, Math.floor(n / 31) - 1, (n % 31) + 1) / DAY_MS;
+  }
+  const holidayYears = new Map();
+  function holidaysOf(y) {
+    if (!holidayYears.has(y)) {
+      const D = (mo, d) => Date.UTC(y, mo - 1, d) / DAY_MS;
+      const p = easter(y);
+      const map = new Map();
+      [[D(1, 1), 'Jour de l’an'], [p + 1, 'Lundi de Pâques'], [D(5, 1), 'Fête du Travail'], [D(5, 8), 'Victoire 1945'],
+        [p + 39, 'Ascension'], [p + 50, 'Lundi de Pentecôte'], [D(7, 14), 'Fête nationale'], [D(8, 15), 'Assomption'],
+        [D(11, 1), 'Toussaint'], [D(11, 11), 'Armistice'], [D(12, 25), 'Noël'],
+      ].forEach(([d, name]) => map.set(d, map.has(d) ? map.get(d) + ' et ' + name : name)); // l'Ascension tombe parfois un 1er ou un 8 mai
+      holidayYears.set(y, map);
+    }
+    return holidayYears.get(y);
+  }
+  // Nom du jour férié, ou '' pour un jour ordinaire.
+  const holiday = (d) => holidaysOf(new Date(d * DAY_MS).getUTCFullYear()).get(d) || '';
+
   let toastTimer = null;
   function showToast(msg, isError) {
     toastEl.textContent = msg;
@@ -464,19 +509,24 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     if (!res.ok) {
       const err = new Error((data && data.error) || 'Le serveur a rencontré un problème. Réessayez dans un instant.');
       err.status = res.status;
+      err.pin = !!(data && data.pin); // sondage protégé : il faut (re)donner le code
       throw err;
     }
     return data;
   }
 
   /* ---------- Créneaux ---------- */
+  // Mêmes règles que le serveur. x : jours exclus ; a : jours ajoutés (fériés) hors des jours de la semaine choisis,
+  // avec tous les moments du sondage. Les sondages d'avant les jours ajoutés n'ont pas de « a ».
   function buildSlots(st) {
     const s = parseYmd(st.s), e = parseYmd(st.e);
     const ex = new Set(st.x.map((o) => s + o));
+    const add = new Set((st.a || []).map((o) => s + o));
+    const all = st.m.reduce((u, r) => u | r, 0);
     const slots = [];
     for (let d = s; d <= e; d++) {
       if (ex.has(d)) continue;
-      const r = st.m[weekday(d)];
+      const r = st.m[weekday(d)] || (add.has(d) ? all : 0);
       for (let t = 0; t < MOMENTS.length; t++) if (r & (1 << t)) slots.push({ d, t });
     }
     return slots;
@@ -558,7 +608,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   };
   window.omqAuthDisabled = () => { authSettled(); renderTopbar(); };
   const displayName = () => (auth.user ? auth.user.name || auth.user.email.split('@')[0] : '');
-  const slotsKeyOf = (st) => [st.s, st.e, st.m.join('.'), st.x.join('.')].join('|');
+  const slotsKeyOf = (st) => [st.s, st.e, st.m.join('.'), st.x.join('.')].concat(st.a && st.a.length ? [st.a.join('.')] : []).join('|');
   // Sans organisateur (sondage créé sans compte, exemple), tout le monde peut choisir la date.
   const canDecide = () => poll.example || !poll.st.owned || poll.st.isOwner;
   function getMe() {
@@ -568,8 +618,9 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   }
 
   /* ---------- État ---------- */
-  let view = null;      // 'create' | 'edit' | 'poll' | 'loading' | 'error' | 'account' | 'privacy'
+  let view = null;      // 'create' | 'edit' | 'poll' | 'pin' | 'loading' | 'error' | 'account' | 'privacy'
   let lastRoute = null;
+  let pinFor = null;    // sondage dont on demande le code
   let poll = null;      // { st, example, slots }
   let ui = freshUi();
   let busy = false;
@@ -583,7 +634,9 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       t: '', n: '',
       s: todayDay + 1, e: todayDay + 28,
       m: [SOIR, SOIR, SOIR, SOIR, SOIR, SOIR, SOIR],
-      x: new Set(),
+      x: new Set(), // jours exclus
+      a: new Set(), // jours fériés ajoutés hors des jours de la semaine choisis
+      pin: '',
     };
   }
   let draft = newDraft();
@@ -618,7 +671,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         <h2 id="c-h">${editing ? 'Réglages' : 'Nouveau sondage'}</h2>
         ${!editing && auth.enabled ? (auth.user
           ? '<p class="notice">Vous êtes connecté&nbsp;: vous serez l’organisateur. Vous seul pourrez choisir la date, modifier, clôturer ou supprimer ce sondage.</p>'
-          : '<p class="notice">Sans compte, tout le monde pourra tout modifier. <a href="#compte">Connectez-vous</a> pour en être l’organisateur (facultatif).</p>') : ''}
+          : '<p class="notice">Sans compte, tout le monde pourra tout modifier. <a href="#compte">Connectez-vous</a> pour en être l’organisateur et pouvoir protéger le lien par un code (facultatif).</p>') : ''}
         <div class="field"><label for="c-title">Nom du repas</label><input type="text" id="c-title" maxlength="80" placeholder="Raclette de janvier" autocomplete="off"></div>
         <div class="field"><label for="c-note">Précisions <span class="opt">(facultatif)</span></label><input type="text" id="c-note" maxlength="160" placeholder="Chez Julie, chacun apporte un plat" autocomplete="off"></div>
         <fieldset class="field"><legend>Période</legend>
@@ -635,6 +688,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
             <button type="button" class="mini" data-act="preset" data-p="week">En semaine</button>
             <button type="button" class="mini" data-act="preset" data-p="weekend">Week-end</button>
           </div>
+          <div class="hols" id="c-hols" aria-live="polite" hidden></div>
         </fieldset>
         <details id="c-fine">
           <summary>Ajuster jour par jour</summary>
@@ -645,9 +699,16 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         </details>
         <div class="field">
           <div class="preview-head"><span class="label">Aperçu</span><span class="count" id="c-count"></span></div>
-          <p class="hint">Touchez un jour pour l’exclure (anniversaire, week-end déjà pris…).</p>
+          <p class="hint">Touchez un jour pour l’exclure (anniversaire, week-end déjà pris…). Les jours fériés sont cerclés&nbsp;; en pointillés, touchez-les pour les ajouter.</p>
           <div class="cal" id="c-cal"></div>
         </div>
+        ${auth.user ? `<div class="field">
+          <label for="c-pin">Code d’accès <span class="opt">(facultatif)</span></label>
+          <input type="text" id="c-pin" class="code-input" inputmode="numeric" maxlength="6" placeholder="4 à 6 chiffres" autocomplete="off" spellcheck="false">
+          <p class="hint">${editing
+            ? 'Laissez vide pour retirer le code. Si vous le changez, chacun devra saisir le nouveau.'
+            : 'Avec un code, le lien seul ne suffit plus pour ouvrir le sondage. Vous le retrouverez sur la page du sondage tant que vous êtes connecté.'}</p>
+        </div>` : ''}
         <p class="error" id="c-error" role="alert" hidden></p>
         <button type="button" class="btn primary big" id="c-create" data-act="${editing ? 'save-poll' : 'create'}">${editing ? 'Enregistrer les modifications' : 'Créer le sondage'}</button>
       </section>`;
@@ -656,6 +717,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     $('#c-start').value = Number.isFinite(draft.s) ? ymd(draft.s) : '';
     if (!editing) $('#c-start').min = ymd(todayDay);
     $('#c-end').value = Number.isFinite(draft.e) ? ymd(draft.e) : '';
+    if ($('#c-pin')) $('#c-pin').value = draft.pin;
     renderCreateDynamic();
   }
 
@@ -665,14 +727,48 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     if (e < s) return { err: 'La date de fin doit être après la date de début.' };
     if (e - s >= MAX_DAYS) return { err: 'Période trop longue : 3 mois maximum.' };
     let slots = 0, days = 0;
+    const all = draft.m.reduce((u, r) => u | r, 0);
     for (let d = s; d <= e; d++) {
-      const r = draft.m[weekday(d)];
+      const r = draft.m[weekday(d)] || (draft.a.has(d) ? all : 0);
       if (!r || draft.x.has(d)) continue;
       days++; slots += popcount(r);
     }
     if (!slots) return { err: 'Aucun créneau : choisissez au moins un jour et un moment.', slots, days };
     if (slots > MAX_SLOTS) return { err: `Trop de créneaux (${slots}). Réduisez la période ou le nombre de moments (${MAX_SLOTS} maximum).`, slots, days };
+    if (auth.user && draft.pin && !/^\d{4,6}$/.test(draft.pin)) return { err: 'Le code d’accès doit faire 4 à 6 chiffres.', slots, days };
     return { slots, days };
+  }
+
+  // Jours fériés de la période, et ceux qui tombent en dehors des jours choisis sans avoir été ajoutés.
+  function draftHolidays() {
+    const { s, e } = draft;
+    const list = [];
+    if (Number.isFinite(s) && Number.isFinite(e) && e >= s && e - s < MAX_DAYS) {
+      for (let d = s; d <= e; d++) { const name = holiday(d); if (name) list.push({ d, name }); }
+    }
+    return { list, missing: list.filter((h) => !draft.m[weekday(h.d)] && !draft.a.has(h.d)) };
+  }
+  function holidaysHTML() {
+    const { list, missing } = draftHolidays();
+    if (!list.length) return '';
+    const n = missing.length;
+    return `<p>${list.length > 1 ? 'Jours fériés' : 'Jour férié'} sur la période&nbsp;: ${list.map((h) =>
+      `<span class="nowrap"><b>${fmt(fShort, h.d)}</b> ${esc(h.name)}</span>`).join(' · ')}</p>
+      ${n ? `<p class="hol-act"><span>${n > 1 ? `${n} tombent` : list.length > 1 ? 'Un tombe' : 'Il tombe'} en dehors des jours choisis.</span>
+        <button type="button" class="mini" data-act="add-hols">${n > 1 ? `Ajouter ces ${n} jours` : 'L’ajouter au sondage'}</button></p>` : ''}`;
+  }
+  // Touche dans l'aperçu : un jour choisi s'exclut ; un jour férié hors des jours choisis s'ajoute (ou se retire).
+  function toggleCalDay(d) {
+    if (draft.m[weekday(d)]) {
+      if (draft.x.has(d)) draft.x.delete(d); else draft.x.add(d);
+    } else if (holiday(d)) {
+      if (draft.a.has(d)) draft.a.delete(d); else { draft.a.add(d); draft.x.delete(d); }
+    }
+  }
+  function addHolidays() {
+    const days = draftHolidays().missing.map((h) => h.d);
+    for (const d of days) { draft.a.add(d); draft.x.delete(d); }
+    return days;
   }
 
   function renderCreateDynamic() {
@@ -698,18 +794,31 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         if (w0 === gStart) label = s;
         else for (let k = w0; k <= Math.min(w0 + 6, e); k++) if (dateOf(k) === 1) label = k;
         if (label !== null) html += `<span class="mh">${fmt(fMonth, label)}</span>`;
+        const all = draft.m.reduce((u, r) => u | r, 0);
         for (let k = w0; k < w0 + 7; k++) {
           if (k < s || k > e) { html += '<span class="cd" aria-hidden="true"></span>'; continue; }
-          const r = draft.m[weekday(k)];
-          if (!r) { html += `<span class="cd off" aria-hidden="true">${dateOf(k)}</span>`; continue; }
+          const hol = holiday(k);
+          const r = draft.m[weekday(k)] || (hol && draft.a.has(k) ? all : 0);
+          const holAttr = hol ? ` title="${esc(hol)}"` : '';
+          if (!r) {
+            html += hol
+              ? `<button type="button" class="cd off hol" data-act="excl" data-d="${k}" aria-pressed="false" aria-label="${fmt(fLong, k)}, ${esc(hol)}, non retenu : touchez pour l’ajouter"${holAttr}>${dateOf(k)}</button>`
+              : `<span class="cd off" aria-hidden="true">${dateOf(k)}</span>`;
+            continue;
+          }
           const ex = draft.x.has(k);
-          html += `<button type="button" class="cd ${ex ? 'ex' : 'on'}" data-act="excl" data-d="${k}" aria-pressed="${!ex}" aria-label="${fmt(fLong, k)}${ex ? ', exclu' : ''}">${dateOf(k)}${ex ? '' : `<span class="dots">${'<i></i>'.repeat(popcount(r))}</span>`}</button>`;
+          html += `<button type="button" class="cd ${ex ? 'ex' : 'on'}${hol ? ' hol' : ''}" data-act="excl" data-d="${k}" aria-pressed="${!ex}" aria-label="${fmt(fLong, k)}${hol ? ', ' + esc(hol) : ''}${ex ? ', exclu' : ''}"${holAttr}>${dateOf(k)}${ex ? '' : `<span class="dots">${'<i></i>'.repeat(popcount(r))}</span>`}</button>`;
         }
       }
       cal.innerHTML = html;
     } else {
       cal.innerHTML = '';
     }
+    const hols = $('#c-hols');
+    const holHtml = holidaysHTML();
+    hols.innerHTML = holHtml;
+    hols.hidden = !holHtml;
+    hols.classList.toggle('todo', !!hols.querySelector('[data-act="add-hols"]'));
     $('#c-count').textContent = chk.slots ? `${plural(chk.slots, 'créneau', 'créneaux')} sur ${plural(chk.days, 'jour')}` : '';
     const err = $('#c-error');
     err.hidden = !chk.err;
@@ -740,6 +849,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       s: ymd(draft.s, ''), e: ymd(draft.e, ''),
       m: draft.m.slice(),
       x: Array.from(draft.x).filter((d) => d >= draft.s && d <= draft.e).map((d) => d - draft.s),
+      a: Array.from(draft.a).filter((d) => d >= draft.s && d <= draft.e && !draft.m[weekday(d)]).map((d) => d - draft.s),
+      pin: auth.user ? draft.pin : '', // le code est réservé aux organisateurs connectés
     };
   }
 
@@ -747,7 +858,10 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     const st = poll.st;
     const s = parseYmd(st.s);
     createDraft = draft;
-    draft = { t: st.t, n: st.n, s, e: parseYmd(st.e), m: st.m.slice(), x: new Set(st.x.map((o) => s + o)) };
+    draft = {
+      t: st.t, n: st.n, s, e: parseYmd(st.e), m: st.m.slice(),
+      x: new Set(st.x.map((o) => s + o)), a: new Set((st.a || []).map((o) => s + o)), pin: st.pin || '',
+    };
     showCreate('', true);
     window.scrollTo(0, 0);
   }
@@ -806,19 +920,80 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     try {
       const st = await api('GET', '/polls/' + id);
       if (lastRoute !== id) return;
-      remember(st);
-      const same = poll && !poll.example && poll.st.i === id;
-      poll = { st, example: false };
-      if (!same) ui = freshUi();
-      view = 'poll';
-      renderPoll();
-      startRefresh();
+      openPoll(st);
     } catch (err) {
       if (lastRoute !== id) return;
       if (err.status === 404) { showCreate(err.message); return; }
+      if (err.pin) { showPin(id); return; }
       view = 'error';
       app.innerHTML = `<section class="state"><h1>On mange quand&nbsp;?</h1><p class="error" role="alert">${esc(err.message)}</p><button type="button" class="btn primary" data-act="retry" data-id="${esc(id)}">Réessayer</button></section>`;
     }
+  }
+
+  // Affiche un sondage reçu du serveur. Une réponse en cours sur ce même sondage est gardée si ses créneaux n'ont pas changé.
+  function openPoll(st) {
+    remember(st);
+    const same = poll && !poll.example && poll.st.i === st.i && slotsKeyOf(poll.st) === slotsKeyOf(st);
+    poll = { st, example: false };
+    if (!same) ui = freshUi();
+    view = 'poll';
+    renderPoll();
+    startRefresh();
+  }
+
+  /* ---------- Vue : code d'accès ---------- */
+  // Le sondage en cours et la réponse commencée restent en mémoire : ils reviennent une fois le bon code donné.
+  function showPin(id, msg) {
+    view = 'pin';
+    pinFor = id;
+    stopRefresh();
+    app.innerHTML = `
+      <header class="poll-head">
+        <a class="back" href="#nouveau">← Nouveau sondage</a>
+        <h1>Sondage protégé</h1>
+        <p class="lede">L’organisateur a protégé ce sondage par un code. Entrez-le pour voir les dispos et ajouter les vôtres.</p>
+      </header>
+      <section class="card" aria-labelledby="pin-h">
+        <h2 id="pin-h">Code d’accès</h2>
+        <form class="auth-form" id="pin-form" novalidate>
+          <input type="text" id="pin-input" class="code-input big" inputmode="numeric" maxlength="6" autocomplete="off" spellcheck="false" aria-labelledby="pin-h" aria-describedby="pin-error">
+          <p class="error" id="pin-error" role="alert"${msg ? '' : ' hidden'}>${esc(msg || '')}</p>
+          <button type="submit" class="btn primary big" id="pin-submit">Ouvrir le sondage</button>
+        </form>
+        <p class="hint">Pas de code&nbsp;? Demandez-le à l’organisateur.${auth.enabled && !auth.user
+          ? ' C’est vous&nbsp;? <a href="#compte">Connectez-vous</a> pour l’ouvrir sans code.' : ''}</p>
+      </section>`;
+    $('#pin-input').focus();
+  }
+  function submitPin() {
+    const id = pinFor;
+    const input = $('#pin-input');
+    const box = $('#pin-error');
+    const pin = input.value.trim();
+    if (!/^\d{4,6}$/.test(pin)) {
+      box.hidden = false;
+      box.textContent = 'Le code fait 4 à 6 chiffres.';
+      input.focus();
+      return;
+    }
+    box.hidden = true;
+    return runAction($('#pin-submit'), 'Vérification…', async () => {
+      let st;
+      try {
+        st = await api('POST', '/polls/' + id + '/pin', { pin });
+      } catch (e) {
+        if (!box.isConnected) throw e;
+        box.hidden = false;
+        box.textContent = e.message;
+        input.select();
+        const quiet = new Error(e.message);
+        quiet.silent = true; // déjà affiché sous le champ
+        throw quiet;
+      }
+      if (lastRoute !== id) return;
+      openPoll(st);
+      window.scrollTo(0, 0);
+    });
   }
 
   function pollLink() { return location.origin + location.pathname + '#' + poll.st.i; }
@@ -833,9 +1008,10 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   function metaText(c) {
     const s = parseYmd(c.st.s), e = parseYmd(c.st.e);
     const dl = daysLabel(c.st.m);
+    const added = (c.st.a || []).length;
     return [
       `Du ${fmt(fShort, s)} au ${fmt(fShort, e)}`,
-      momentsUsed(c.st.m).join(', ') + (dl ? ' · ' + dl : ''),
+      momentsUsed(c.st.m).join(', ') + (dl ? ' · ' + dl : '') + (added ? ` + ${plural(added, 'jour férié', 'jours fériés')}` : ''),
       plural(c.people.length, 'réponse'),
     ].join(' · ');
   }
@@ -969,7 +1145,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       if (sl.d !== lastDay) {
         if (lastDay !== null) rows += '</div></div>';
         if (monthKey(sl.d) !== lastMonth) { rows += `<p class="amonth">${fmt(fMonth, sl.d)}</p>`; lastMonth = monthKey(sl.d); }
-        rows += `<div class="arow"><div class="adate"><span class="wd">${fmt(fWd, sl.d)}</span> ${fmt(fDM, sl.d)}</div><div class="aslots">`;
+        const hol = holiday(sl.d);
+        rows += `<div class="arow"><div class="adate"><span class="wd">${fmt(fWd, sl.d)}</span> ${fmt(fDM, sl.d)}${hol ? `<span class="hol-name">${esc(hol)}</span>` : ''}</div><div class="aslots">`;
         lastDay = sl.d;
       }
       const v = ui.vals[i] || 0;
@@ -1002,6 +1179,9 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         : 'Un seul lien pour tout le monde. Les réponses s’y ajoutent au fur et à mesure.'}</p>
       <div class="link-row"><input type="text" id="share-link" readonly value="${esc(link)}" aria-label="Lien du sondage"><button type="button" class="btn primary" data-act="copy" data-target="share-link">Copier le lien</button></div>
       <div class="share-actions"><a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Envoyer sur WhatsApp</a></div>
+      ${!poll.st.hasPin ? '' : poll.st.pin
+        ? `<p class="notice">Code d’accès&nbsp;: <b class="code">${esc(poll.st.pin)}</b>. Le lien seul ne suffit pas&nbsp;: donnez aussi ce code au groupe.</p>`
+        : '<p class="hint">Ce sondage est protégé par un code&nbsp;: donnez-le avec le lien.</p>'}
     </section>`;
   }
 
@@ -1011,6 +1191,9 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     return `<section class="card org" id="org" aria-labelledby="o-h">
       <h2 id="o-h">Organisation</h2>
       <p class="muted">Vous seul choisissez la date finale, modifiez, clôturez ou supprimez ce sondage, depuis n’importe quel appareil où vous êtes connecté.</p>
+      <p class="hint">${poll.st.pin
+        ? `Protégé par le code <b class="code">${esc(poll.st.pin)}</b>. Pour le changer ou le retirer&nbsp;: «&nbsp;Modifier le sondage&nbsp;».`
+        : 'Pas de code d’accès&nbsp;: le lien suffit pour ouvrir le sondage. Pour en ajouter un&nbsp;: «&nbsp;Modifier le sondage&nbsp;».'}</p>
       <div class="share-actions">
         <button type="button" class="btn" data-act="edit-poll">Modifier le sondage</button>
         <button type="button" class="btn" data-act="toggle-closed">${closed ? 'Rouvrir le sondage' : 'Clôturer le sondage'}</button>
@@ -1069,7 +1252,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         const ch = p[1][i];
         return ch === '1' ? '<td class="v1" title="Dispo">✓</td>' : ch === '2' ? '<td class="v2" title="Si besoin">~</td>' : '<td class="v0" title="Pas dispo">·</td>';
       }).join('');
-      return `<tr class="${cls}"><th class="c-slot" scope="row"><span class="d">${fmt(fShort, sl.d)}${tag}</span><span class="t">${MOMENTS[sl.t]}</span></th><td class="c-score"><span class="num">${r.tot}</span><span class="of">/${n}</span><span class="bar"><i style="width:${pct}%"></i></span></td>${cells}</tr>`;
+      const hol = holiday(sl.d);
+      return `<tr class="${cls}"><th class="c-slot" scope="row"><span class="d">${fmt(fShort, sl.d)}${tag}</span><span class="t">${MOMENTS[sl.t]}${hol ? ` · <span class="hol-txt" title="${esc(hol)}">férié</span>` : ''}</span></th><td class="c-score"><span class="num">${r.tot}</span><span class="of">/${n}</span><span class="bar"><i style="width:${pct}%"></i></span></td>${cells}</tr>`;
     }).join('');
     return `<section class="results" aria-labelledby="r-h">
       <h2 id="r-h">Toutes les réponses</h2>
@@ -1110,6 +1294,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     try {
       await fn();
     } catch (err) {
+      // Le code a été ajouté ou changé pendant qu'on avait le sondage ouvert : on le demande, la réponse en cours est gardée.
+      if (err.pin && view === 'poll' && poll && !poll.example) { showPin(poll.st.i, 'Le code d’accès a changé : entrez le nouveau code pour continuer.'); return; }
       if (!err.silent) showToast(err.message, true);
       if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = old; }
     } finally {
@@ -1226,7 +1412,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   }
 
   /* ---------- Actualisation automatique ---------- */
-  const signature = (st) => JSON.stringify([st.p, st.f, st.owned, st.isOwner, st.closed, st.t, st.n, slotsKeyOf(st)]);
+  const signature = (st) => JSON.stringify([st.p, st.f, st.owned, st.isOwner, st.closed, st.t, st.n, slotsKeyOf(st), st.hasPin, st.pin]);
   async function refresh(force) {
     if (view !== 'poll' || !poll || poll.example || busy || (!force && document.visibilityState !== 'visible')) return;
     const id = poll.st.i;
@@ -1242,14 +1428,18 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
           ui = freshUi();
           renderPoll();
           showToast('L’organisateur a modifié les dates : cochez à nouveau vos dispos.', true);
-        } else if (force || (!ui.open && (datesChanged || st.t !== before.t || st.n !== before.n || st.isOwner !== before.isOwner || st.closed !== before.closed))) {
+        } else if (force || (!ui.open && (datesChanged || st.t !== before.t || st.n !== before.n || st.isOwner !== before.isOwner || st.closed !== before.closed || st.hasPin !== before.hasPin || st.pin !== before.pin))) {
           if (ui.open && (st.closed && !st.isOwner)) ui = freshUi();
           renderPoll();
         } else {
           renderLive();
         }
       }
-    } catch (e) { /* on réessaiera au prochain passage */ }
+    } catch (e) {
+      // Le code a changé : on le redemande, sauf si une réponse est en cours (elle le demandera à l'enregistrement).
+      if (e.pin && view === 'poll' && poll && poll.st.i === id && !ui.open) showPin(id);
+      // sinon, on réessaiera au prochain passage
+    }
   }
   function startRefresh() { stopRefresh(); refreshTimer = setInterval(refresh, REFRESH_MS); }
   function stopRefresh() { if (refreshTimer) clearInterval(refreshTimer); refreshTimer = null; }
@@ -1266,6 +1456,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   // Connexion ou déconnexion : la vue en cours se met à jour (droits d'organisateur, réponses protégées…).
   function onAuthChanged() {
     if (view === 'poll' && poll && !poll.example) refresh(true);
+    else if (view === 'pin' && pinFor === lastRoute) loadPoll(pinFor); // l'organisateur passe sans code
     else if (view === 'create') showCreate();
     else if (view === 'account') showAccount();
   }
@@ -1434,6 +1625,8 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
         </ul>
         <h2>Ce que nous ne faisons pas</h2>
         <p>Pas de publicité, pas de revente, pas de pistage. Les données servent uniquement à faire fonctionner les sondages. Comme pour tout site, nos hébergeurs gardent des journaux techniques (adresse IP, heure de connexion) pour le bon fonctionnement et la sécurité.</p>
+        <h2>Sondages protégés par un code</h2>
+        <p>L’organisateur peut protéger un sondage par un code. Le code est enregistré avec le sondage pour qu’il puisse toujours le retrouver. Une fois le bon code saisi, votre navigateur garde un cookie technique, propre à ce sondage, pour ne pas vous le redemander. Pour bloquer les essais en série, les essais de code sont comptés pendant 15&nbsp;minutes avec une empreinte de votre adresse IP, puis effacés.</p>
         <h2>Où sont les données</h2>
         <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase).</p>
         <h2>Supprimer votre compte</h2>
@@ -1478,7 +1671,14 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
       case 'day': toggleDay(+el.dataset.w); renderCreateDynamic(); refocus(); break;
       case 'preset': preset(el.dataset.p); renderCreateDynamic(); break;
       case 'cell': draft.m[+el.dataset.w] ^= 1 << +el.dataset.t; renderCreateDynamic(); refocus(); break;
-      case 'excl': { const d = +el.dataset.d; if (draft.x.has(d)) draft.x.delete(d); else draft.x.add(d); renderCreateDynamic(); refocus(); break; }
+      case 'excl': toggleCalDay(+el.dataset.d); renderCreateDynamic(); refocus(); break;
+      case 'add-hols': {
+        const added = addHolidays(); renderCreateDynamic();
+        // Le bouton disparaît : le focus passe au premier jour ajouté dans l'aperçu.
+        const n = added.length && $(`[data-act="excl"][data-d="${added[0]}"]`); if (hadFocus && n) n.focus({ preventScroll: true });
+        showToast(added.length > 1 ? `${added.length} jours fériés ajoutés au sondage.` : 'Jour férié ajouté au sondage.');
+        break;
+      }
       case 'create': createPoll(el); break;
       case 'retry': lastRoute = el.dataset.id; loadPoll(el.dataset.id); break;
       case 'open-answer': {
@@ -1538,6 +1738,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     const t = ev.target;
     if (t.id === 'c-title') draft.t = t.value;
     else if (t.id === 'c-note') draft.n = t.value;
+    else if (t.id === 'c-pin' || t.id === 'pin-input') {
+      const digits = t.value.replace(/\D/g, '').slice(0, 6);
+      if (digits !== t.value) t.value = digits;
+      if (t.id === 'c-pin') { draft.pin = digits; renderCreateDynamic(); }
+    }
     else if (t.id === 'c-start' || t.id === 'c-end') onDateChange(t);
     else if (t.id === 'ans-note') ui.note = t.value;
     else if (t.id === 'ans-name') {
@@ -1549,6 +1754,7 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
   });
   app.addEventListener('submit', (ev) => {
     if (ev.target.id === 'auth-form') { ev.preventDefault(); submitAuth(); }
+    else if (ev.target.id === 'pin-form') { ev.preventDefault(); submitPin(); }
   });
   app.addEventListener('change', (ev) => {
     const t = ev.target;

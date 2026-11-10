@@ -31,9 +31,12 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 Règles partagées par la page et le serveur, à garder identiques des deux côtés :
 - L'ordre des moments (`Journée, Matin, Midi, Après-midi, Soir`) fixe l'ordre des créneaux et les bits des réglages.
 - `MOMENT_HOURS` : horaires indicatifs pour l'agenda, heure de Paris.
-- La liste des créneaux se calcule à partir de `s`, `e`, `m`, `x` ; une réponse est une chaîne avec un caractère par créneau (`0` pas dispo, `1` dispo, `2` si besoin). `slotsKey` permet au serveur de refuser une réponse faite sur une liste de créneaux périmée.
+- La liste des créneaux se calcule à partir de `s`, `e`, `m`, `x` et `a` (jours ajoutés hors des jours de la semaine choisis, en pratique des jours fériés, avec tous les moments du sondage ; absent des anciens sondages) ; une réponse est une chaîne avec un caractère par créneau (`0` pas dispo, `1` dispo, `2` si besoin). `slotsKey` permet au serveur de refuser une réponse faite sur une liste de créneaux périmée ; `a` n'y figure que s'il n'est pas vide.
+- Les jours fériés (France métropolitaine, Pâques calculé) ne sont connus que de la page : le serveur ne voit que `a`.
 
 Droits (fonctions `isOwner` et `canEditAnswer` du serveur) : un sondage créé en étant connecté a un organisateur (`owner_uid`), qui seul choisit la date, modifie, clôture ou supprime. Une réponse donnée en étant connecté (`answers.uid`) n'est modifiable que par son auteur ou l'organisateur ; une réponse sans compte, par tous. Un sondage sans organisateur (créé sans compte, ou d'avant les comptes) reste ouvert à tous, sauf réglages et suppression. La page envoie le jeton Firebase en `Authorization: Bearer`.
+
+Code d'accès (`polls.pin`, en clair pour que l'organisateur le retrouve) : seul un organisateur connecté peut le poser. Sans lui, toute route `/api/polls/:id…` répond 403 `{ pin: true }`, sauf pour l'organisateur. `POST /api/polls/:id/pin` vérifie le code et pose un cookie HttpOnly `omq_pin_<id>` (empreinte du code, limité au chemin du sondage, donc valable aussi pour le fichier `.ics`). Les essais sont comptés dans `pin_tries` (5 par 15 minutes, par sondage et empreinte d'IP) avant la comparaison, pour que des essais en parallèle ne passent pas.
 
 ## Git
 

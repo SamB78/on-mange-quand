@@ -2,6 +2,7 @@
 //
 //   POST   /api/polls                     créer un sondage (organisateur = compte connecté, s'il y en a un)
 //   GET    /api/polls/:id                 lire un sondage et ses réponses
+//   POST   /api/polls/:id/pin             donner le code d'accès { pin } ; le bon code pose un cookie pour ce sondage
 //   PUT    /api/polls/:id/answers         ajouter ou modifier une réponse { name, ans, note?, prev?, slotsKey? }
 //   DELETE /api/polls/:id/answers         supprimer une réponse { name }
 //   PUT    /api/polls/:id/final           choisir le créneau final { i } (-1 pour annuler)
@@ -14,6 +15,7 @@
 //
 // Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.
 // Sans compte, tout reste possible : le compte ne sert qu'à organiser et à protéger ses réponses.
+// Un sondage protégé par un code (choisi par l'organisateur) ne s'ouvre qu'à l'organisateur et à ceux qui ont donné le code.
 
 import { verifyIdToken } from './auth.js';
 
@@ -27,11 +29,16 @@ const MOMENT_HOURS = [null, ['0900', '1200'], ['1200', '1430'], ['1400', '1800']
 const DAY_MS = 86400000;
 const ID_RE = /^[a-z2-7]{10}$/;
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+const PIN_RE = /^\d{4,6}$/;
+const PIN_MAX_TRIES = 5; // essais de code par sondage et par adresse IP…
+const PIN_WINDOW_MS = 15 * 60000; // …sur 15 minutes
 
 class HttpError extends Error {
-  constructor(status, message) {
+  // extra : champs ajoutés à la réponse d'erreur (ex. { pin: true } pour que la page demande le code).
+  constructor(status, message, extra) {
     super(message);
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -64,13 +71,16 @@ function parseYmd(s) {
 }
 
 // Créneaux d'un sondage, dans l'ordre : mêmes règles que la page.
+// x : jours exclus ; a : jours ajoutés hors des jours de la semaine choisis (jours fériés),
+// avec tous les moments du sondage. Les sondages d'avant les jours ajoutés n'ont pas de « a ».
 function buildSlots(cfg) {
   const s = parseYmd(cfg.s), e = parseYmd(cfg.e);
-  const ex = new Set(cfg.x);
+  const ex = new Set(cfg.x), add = new Set(cfg.a || []);
+  const all = cfg.m.reduce((u, r) => u | r, 0);
   const slots = [];
   for (let d = s; d <= e; d++) {
     if (ex.has(d - s)) continue;
-    const r = cfg.m[weekday(d)];
+    const r = cfg.m[weekday(d)] || (add.has(d - s) ? all : 0);
     for (let t = 0; t < MOMENT_HOURS.length; t++) if (r & (1 << t)) slots.push({ d, t });
   }
   return slots;
@@ -130,14 +140,19 @@ function validateConfig(b) {
   if (e < s) throw new HttpError(400, 'La date de fin doit être après la date de début.');
   if (e - s >= MAX_DAYS) throw new HttpError(400, 'Période trop longue : 3 mois maximum.');
   if (!Array.isArray(b.m) || b.m.length !== 7 || !b.m.every(Number.isInteger)) throw new HttpError(400, 'Jours ou moments invalides.');
-  const x = Array.isArray(b.x) ? [...new Set(b.x.filter((o) => Number.isInteger(o) && o >= 0 && o <= e - s))].sort((a, c) => a - c) : [];
+  const m = b.m.map((r) => r & 31);
+  const offsets = (list, keep) => (Array.isArray(list)
+    ? [...new Set(list.filter((o) => Number.isInteger(o) && o >= 0 && o <= e - s && keep(o)))].sort((p, q) => p - q)
+    : []);
   const cfg = {
     t: cleanText(b.t, 80) || 'Repas entre amis',
     n: cleanText(b.n, 160),
     s: String(b.s),
     e: String(b.e),
-    m: b.m.map((r) => r & 31),
-    x,
+    m,
+    x: offsets(b.x, () => true),
+    // Un jour ajouté n'a de sens que si son jour de la semaine n'est pas déjà choisi.
+    a: offsets(b.a, (o) => !m[weekday(s + o)]),
   };
   const n = slotCount(cfg);
   if (!n) throw new HttpError(400, 'Aucun créneau : choisissez au moins un jour et un moment.');
@@ -159,7 +174,8 @@ async function readBody(request) {
 
 /* ---------- Comptes et droits ---------- */
 // Les réglages qui fixent la liste des créneaux. La page les renvoie pour prouver qu'elle est à jour.
-const slotsKey = (cfg) => [cfg.s, cfg.e, cfg.m.join('.'), cfg.x.join('.')].join('|');
+// Les jours ajoutés n'y figurent que s'il y en a : la clé des sondages sans jour ajouté ne change pas.
+const slotsKey = (cfg) => [cfg.s, cfg.e, cfg.m.join('.'), cfg.x.join('.')].concat(cfg.a && cfg.a.length ? [cfg.a.join('.')] : []).join('|');
 
 // Compte connecté (jeton Firebase vérifié), ou null. Un jeton invalide renvoie 401 pour que la page se reconnecte.
 async function currentUser(request, env, url) {
@@ -173,16 +189,72 @@ async function currentUser(request, env, url) {
 }
 
 async function loadPoll(env, id) {
-  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed FROM polls WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin FROM polls WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   return row;
+}
+
+/* ---------- Code d'accès ---------- */
+// Le code est facultatif et réservé aux organisateurs connectés : ils le retrouvent toujours sur la page du sondage.
+function cleanPin(v) {
+  const pin = String(v ?? '').trim();
+  if (!pin) return null;
+  if (!PIN_RE.test(pin)) throw new HttpError(400, 'Le code d’accès doit faire 4 à 6 chiffres.');
+  return pin;
+}
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// Le cookie ne contient pas le code mais une empreinte : il ne vaut plus rien si l'organisateur change le code.
+const pinToken = async (id, pin) => (await sha256Hex(`on-mange-quand|${id}|${pin}`)).slice(0, 32);
+const pinCookieName = (id) => `omq_pin_${id}`;
+function readCookie(request, name) {
+  for (const part of (request.headers.get('cookie') || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return '';
+}
+async function hasPinCookie(request, row) {
+  return readCookie(request, pinCookieName(row.id)) === await pinToken(row.id, row.pin);
+}
+// Cookie limité aux adresses de ce sondage : il accompagne aussi le lien du fichier agenda.
+async function pinCookie(url, row) {
+  return `${pinCookieName(row.id)}=${await pinToken(row.id, row.pin)}; Path=/api/polls/${row.id}; Max-Age=31536000; HttpOnly; SameSite=Lax${url.protocol === 'https:' ? '; Secure' : ''}`;
+}
+// Compte un essai avant de comparer, en une seule requête : des essais lancés en parallèle ne passent pas entre les mailles.
+async function checkPin(env, request, row, pin) {
+  const now = Date.now();
+  const ipHash = (await sha256Hex(`${row.id}|${request.headers.get('cf-connecting-ip') || ''}`)).slice(0, 32);
+  const [, counted] = await env.DB.batch([
+    env.DB.prepare('DELETE FROM pin_tries WHERE since <= ?').bind(now - PIN_WINDOW_MS),
+    env.DB.prepare(
+      `INSERT INTO pin_tries (poll_id, ip_hash, tries, since) VALUES (?, ?, 1, ?)
+       ON CONFLICT (poll_id, ip_hash) DO UPDATE SET tries = tries + 1
+       RETURNING tries, since`
+    ).bind(row.id, ipHash, now),
+  ]);
+  const { tries, since } = counted.results[0];
+  if (tries > PIN_MAX_TRIES) {
+    const minutes = Math.max(1, Math.ceil((since + PIN_WINDOW_MS - now) / 60000));
+    throw new HttpError(429, `Trop d’essais. Réessayez dans ${minutes} minute${minutes > 1 ? 's' : ''}.`, { pin: true });
+  }
+  if (pin !== row.pin) {
+    const left = PIN_MAX_TRIES - tries;
+    throw new HttpError(403, left === 0
+      ? 'Code incorrect. Trop d’essais : réessayez dans 15 minutes.'
+      : `Code incorrect.${left <= 2 ? ` Encore ${left} essai${left > 1 ? 's' : ''}.` : ''}`, { pin: true });
+  }
+  await env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ? AND ip_hash = ?').bind(row.id, ipHash).run();
 }
 
 // Règles :
 // - sondage sans organisateur (créé sans compte) : tout le monde peut tout faire, sauf modifier les réglages ou supprimer ;
 // - sondage avec organisateur : lui seul choisit la date, modifie, clôture ou supprime ;
 //   une réponse donnée en étant connecté n'est modifiable que par son auteur ou l'organisateur ;
-// - sondage clôturé : plus personne ne modifie les réponses, sauf l'organisateur.
+// - sondage clôturé : plus personne ne modifie les réponses, sauf l'organisateur ;
+// - sondage protégé par un code : rien n'est lisible ni modifiable sans le code, sauf pour l'organisateur.
 const isOwner = (row, user) => !!(row.owner_uid && user && row.owner_uid === user.uid);
 function canEditAnswer(row, user, answer) {
   if (isOwner(row, user)) return true;
@@ -203,8 +275,18 @@ async function pollResponse(env, row, user) {
     owned: !!row.owner_uid,
     isOwner: isOwner(row, user),
     closed: !!row.closed,
+    hasPin: !!row.pin,
+    pin: isOwner(row, user) ? row.pin || '' : undefined, // le code lui-même, pour l'organisateur seulement
     p: results.map((r) => [r.name, r.ans, r.updated_at, r.note, canEditAnswer(row, user, r), !!user && r.uid === user.uid]),
   };
+}
+
+// Réponse avec le sondage. Si le sondage a un code et que ce navigateur n'a pas encore le cookie
+// (l'organisateur sur un nouvel appareil, ou quelqu'un qui vient de donner le code), on le pose.
+async function pollJson(env, request, url, row, user, status = 200) {
+  const res = json(await pollResponse(env, row, user), status);
+  if (row.pin && !(await hasPinCookie(request, row))) res.headers.append('set-cookie', await pinCookie(url, row));
+  return res;
 }
 
 async function handleMe(request, env, url, parts) {
@@ -244,17 +326,22 @@ async function handleApi(request, env, url) {
   if (parts[1] === 'me') return handleMe(request, env, url, parts);
   if (parts[1] !== 'polls' || parts.length > 4) throw new HttpError(404, 'Adresse inconnue.');
   const user = await currentUser(request, env, url);
+  const reply = (r, status) => pollJson(env, request, url, r, user, status);
 
   if (parts.length === 2) {
     if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
-    const cfg = validateConfig(await readBody(request));
+    const body = await readBody(request);
+    const cfg = validateConfig(body);
+    const pin = cleanPin(body.pin);
+    // Sans compte, personne ne pourrait retrouver un code perdu : il est réservé aux organisateurs connectés.
+    if (pin && !user) throw new HttpError(400, 'Connectez-vous pour protéger le sondage par un code : vous pourrez toujours le retrouver.');
     const id = newId();
     const now = Date.now();
-    const row = { id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0 };
-    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)')
-      .bind(id, row.config, row.owner_uid, now, now)
+    const row = { id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0, pin };
+    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, pin, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
+      .bind(id, row.config, row.owner_uid, pin, now, now)
       .run();
-    return json(await pollResponse(env, row, user), 201);
+    return reply(row, 201);
   }
 
   const id = parts[2];
@@ -263,6 +350,16 @@ async function handleApi(request, env, url) {
   const cfg = JSON.parse(row.config);
   const action = parts[3] || '';
   const now = Date.now();
+
+  if (action === 'pin') {
+    if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
+    if (row.pin && !isOwner(row, user)) await checkPin(env, request, row, String((await readBody(request)).pin ?? '').trim());
+    return reply(row);
+  }
+  if (row.pin && !isOwner(row, user) && !(await hasPinCookie(request, row))) {
+    throw new HttpError(403, 'Ce sondage est protégé par un code.', { pin: true });
+  }
+
   const touch = env.DB.prepare('UPDATE polls SET updated_at = ? WHERE id = ?').bind(now, id);
   const ownerOnly = (message) => { if (!isOwner(row, user)) throw new HttpError(403, message); };
   const ownerIfOwned = (message) => { if (row.owner_uid) ownerOnly(message); };
@@ -271,13 +368,16 @@ async function handleApi(request, env, url) {
   };
 
   if (!action) {
-    if (method === 'GET') return json(await pollResponse(env, row, user));
+    if (method === 'GET') return reply(row);
 
     if (method === 'PUT') {
       ownerOnly(row.owner_uid
         ? 'Seul l’organisateur peut modifier le sondage.'
         : 'Ce sondage a été créé sans compte : ses réglages ne peuvent plus être modifiés.');
-      const next = validateConfig(await readBody(request));
+      const body = await readBody(request);
+      const next = validateConfig(body);
+      // Sans champ « pin » (page d'avant les codes), le code ne change pas ; vide, il est retiré.
+      const pin = 'pin' in body ? cleanPin(body.pin) : row.pin;
       // Les dispos déjà données suivent leur créneau (même jour, même moment) ; celles des créneaux retirés sont perdues.
       const oldSlots = buildSlots(cfg), newSlots = buildSlots(next);
       const slotKey = (sl) => sl.d * 8 + sl.t;
@@ -289,10 +389,10 @@ async function handleApi(request, env, url) {
       const config = JSON.stringify(next);
       const { results } = await env.DB.prepare('SELECT name_key, ans FROM answers WHERE poll_id = ?').bind(id).all();
       await env.DB.batch([
-        env.DB.prepare('UPDATE polls SET config = ?, final_idx = ?, updated_at = ? WHERE id = ?').bind(config, finalIdx, now, id),
+        env.DB.prepare('UPDATE polls SET config = ?, final_idx = ?, pin = ?, updated_at = ? WHERE id = ?').bind(config, finalIdx, pin, now, id),
         ...results.map((r) => env.DB.prepare('UPDATE answers SET ans = ? WHERE poll_id = ? AND name_key = ?').bind(remap(r.ans), id, r.name_key)),
       ]);
-      return json(await pollResponse(env, { ...row, config, final_idx: finalIdx }, user));
+      return reply({ ...row, config, final_idx: finalIdx, pin });
     }
 
     if (method === 'DELETE') {
@@ -301,6 +401,7 @@ async function handleApi(request, env, url) {
         : 'Ce sondage a été créé sans compte : il ne peut pas être supprimé.');
       await env.DB.batch([
         env.DB.prepare('DELETE FROM answers WHERE poll_id = ?').bind(id),
+        env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ?').bind(id),
         env.DB.prepare('DELETE FROM polls WHERE id = ?').bind(id),
       ]);
       return json({ deleted: true });
@@ -349,7 +450,7 @@ async function handleApi(request, env, url) {
       touch
     );
     await env.DB.batch(statements);
-    return json(await pollResponse(env, row, user));
+    return reply(row);
   }
 
   if (action === 'answers' && method === 'DELETE') {
@@ -361,7 +462,7 @@ async function handleApi(request, env, url) {
       throw new HttpError(403, 'Seule la personne qui a donné cette réponse, ou l’organisateur, peut la supprimer.');
     }
     await env.DB.batch([env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key), touch]);
-    return json(await pollResponse(env, row, user));
+    return reply(row);
   }
 
   if (action === 'final' && method === 'PUT') {
@@ -369,14 +470,14 @@ async function handleApi(request, env, url) {
     const i = Number((await readBody(request)).i);
     const finalIdx = Number.isInteger(i) && i >= 0 && i < slotCount(cfg) ? i : null;
     await env.DB.prepare('UPDATE polls SET final_idx = ?, updated_at = ? WHERE id = ?').bind(finalIdx, now, id).run();
-    return json(await pollResponse(env, { ...row, final_idx: finalIdx }, user));
+    return reply({ ...row, final_idx: finalIdx });
   }
 
   if (action === 'closed' && method === 'PUT') {
     ownerOnly('Seul l’organisateur peut clôturer le sondage.');
     const closed = (await readBody(request)).closed ? 1 : 0;
     await env.DB.prepare('UPDATE polls SET closed = ?, updated_at = ? WHERE id = ?').bind(closed, now, id).run();
-    return json(await pollResponse(env, { ...row, closed }, user));
+    return reply({ ...row, closed });
   }
 
   if (action === 'evenement.ics' && method === 'GET') {
@@ -401,7 +502,7 @@ export default {
       try {
         return await handleApi(request, env, url);
       } catch (err) {
-        if (err instanceof HttpError) return json({ error: err.message }, err.status);
+        if (err instanceof HttpError) return json({ ...err.extra, error: err.message }, err.status);
         console.error(err);
         return json({ error: 'Le serveur a rencontré un problème. Réessayez dans un instant.' }, 500);
       }

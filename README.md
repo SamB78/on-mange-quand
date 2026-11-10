@@ -7,8 +7,8 @@ Sondage de dispos pour fixer la date d'un repas. Tout fonctionne sans compte ; u
 
 ## Comment ça marche
 
-1. On choisit la période, les moments (journée, matin, midi, après-midi, soir) et les jours possibles, puis on crée le sondage. Si on est connecté, on en devient l'**organisateur**.
-2. On envoie le lien au groupe, une seule fois.
+1. On choisit la période, les moments (journée, matin, midi, après-midi, soir) et les jours possibles, puis on crée le sondage. Les **jours fériés** de la période sont signalés : s'ils tombent en dehors des jours choisis (en semaine quand on a choisi « Week-end », par exemple), on peut les ajouter d'un geste. Si on est connecté, on devient l'**organisateur** et on peut protéger le lien par un **code d'accès** (4 à 6 chiffres).
+2. On envoie le lien au groupe, une seule fois (et le code, s'il y en a un).
 3. Chacun entre son prénom, coche ses créneaux (une fois = dispo, deux fois = si besoin) et peut laisser un petit mot.
 4. Le meilleur créneau s'affiche en haut. Une fois la date choisie, chacun peut l'ajouter à son agenda.
 
@@ -20,12 +20,18 @@ Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authen
 
 | | Sondage créé sans compte | Sondage avec organisateur |
 |---|---|---|
+| Ouvrir le sondage | tout le monde, avec le lien | avec le lien, plus le code s'il y en a un ; l'organisateur toujours, sans code |
 | Répondre | tout le monde | tout le monde (sauf s'il est clôturé) |
 | Modifier une réponse | tout le monde | une réponse donnée sans compte : tout le monde ; avec un compte : son auteur et l'organisateur |
 | Choisir la date finale | tout le monde | l'organisateur |
 | Modifier les réglages, clôturer, supprimer | personne | l'organisateur |
+| Ajouter, changer ou retirer le code d'accès | personne | l'organisateur |
 
 Les sondages créés avant l'arrivée des comptes sont des sondages sans organisateur.
+
+### Code d'accès
+
+Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perdu : l'organisateur le retrouve sur la page du sondage. Une fois le bon code saisi, le navigateur garde un cookie propre au sondage ; si l'organisateur change le code, chacun doit saisir le nouveau. Après 5 essais en 15 minutes depuis une même adresse IP, les essais sont bloqués jusqu'à la fin de ces 15 minutes.
 
 ## Organisation du code
 
