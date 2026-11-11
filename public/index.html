@@ -1157,10 +1157,11 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--accent); min
     return 'pris ' + (hits.includes('toute la journée') ? 'toute la journée' : hits.slice(0, 2).join(', ') + (hits.length > 2 ? '…' : ''));
   }
 
-  // Comparaison avec l'agenda Google : client OAuth public du projet Firebase (vide = bouton masqué).
+  // Comparaison avec l'agenda Google : client OAuth « Client Web 2 » du projet Google Cloud, réservé à l'agenda
+  // (celui de Firebase sert à la connexion). Identifiant public, aucun secret n'est utilisé. Vide = bouton masqué.
   // Google ne renvoie que les plages occupées de l'agenda principal ; tout reste dans le navigateur.
   // Côté Google Cloud : API Google Calendar activée, adresse du site dans les origines JavaScript autorisées du client.
-  const GOOGLE_CLIENT_ID = '704019232045-j9fb3sh6q6llg1ecm7qjrno34fecr7mb.apps.googleusercontent.com';
+  const GOOGLE_CLIENT_ID = '704019232045-vj6hkifiqugiqj9gs49sn5iihln7iqrl.apps.googleusercontent.com';
   const FREEBUSY_SCOPE = 'https://www.googleapis.com/auth/calendar.freebusy';
   let gisLoading = null;
   // Le script de Google se charge à l'ouverture du formulaire : la fenêtre d'accord doit s'ouvrir dès le toucher du bouton.
