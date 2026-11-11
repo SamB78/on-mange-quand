@@ -79,13 +79,11 @@ Le projet Firebase se renseigne à deux endroits : `CONFIG` dans le module en ba
 
 ## Brancher l'agenda Google
 
-Le bouton « Comparer avec mon agenda Google » utilise le client OAuth Web du projet Firebase (`GOOGLE_CLIENT_ID` dans `public/index.html` ; vide = bouton masqué). Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
+Le bouton « Comparer avec mon agenda Google » utilise un client OAuth à part, **Client Web 2** (`GOOGLE_CLIENT_ID` dans `public/index.html` ; vide = bouton masqué). Le client « Web client (auto created by Google Service) » sert à la connexion Firebase : ne pas toucher à son code secret. Celui de Client Web 2 ne sert à rien, la page n'utilise que l'identifiant. Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
 
-1. **API et services → Bibliothèque** : activer **Google Calendar API**.
-2. **Google Auth Platform → Accès aux données** : ajouter le niveau d'accès `https://www.googleapis.com/auth/calendar.freebusy` (lecture des disponibilités seulement).
-3. **Google Auth Platform → Clients** → « Web client (auto created by Google Service) » → **Origines JavaScript autorisées** : ajouter `https://on-mange-quand-test.on-mange-quand.workers.dev`, `https://on-mange-quand.on-mange-quand.workers.dev` et `http://localhost:8787`.
-
-Si Google classe cet accès comme « sensible » et que l'application n'est pas validée par Google, un écran « application non validée » s'affiche avant l'accord, et 100 personnes au plus peuvent l'autoriser.
+1. **API et services → Bibliothèque** : **Google Calendar API** activée.
+2. **Google Auth Platform → Accès aux données** : niveau d'accès `https://www.googleapis.com/auth/calendar.freebusy` (lecture des disponibilités seulement). Google le range parmi les accès non sensibles : pas d'écran « application non validée », pas de limite de 100 personnes.
+3. **Google Auth Platform → Clients → Client Web 2 → Origines JavaScript autorisées** : `https://on-mange-quand-test.on-mange-quand.workers.dev`, `https://on-mange-quand.on-mange-quand.workers.dev` et `http://localhost:8787`.
 
 ## Mettre en ligne la version de test
 
