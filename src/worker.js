@@ -1,4 +1,4 @@
-// Serveur de « On mange quand ? » : sert la page (public/) et l'API des sondages.
+// Serveur de « Dispos » : sert la page (public/) et l'API des sondages.
 //
 //   POST   /api/polls                     créer un sondage (organisateur = compte connecté ; sinon une clé d'organisation est rendue)
 //   GET    /api/polls/:id                 lire un sondage et ses réponses
@@ -16,7 +16,7 @@
 //   POST   /api/me/agenda                 créer le lien d'agenda, ou le remplacer par un nouveau
 //   DELETE /api/me/agenda                 désactiver le lien d'agenda
 //   DELETE /api/me                        détacher le compte de ses sondages et réponses (avant sa suppression)
-//   GET    /api/agenda/:token.ics         le lien d'agenda : les repas décidés du compte (sans connexion, le jeton suffit)
+//   GET    /api/agenda/:token.ics         le lien d'agenda : les dates choisies du compte (sans connexion, le jeton suffit)
 //
 // Toute autre adresse sans extension (/, /nouveau, /s/:id, /compte…) rend la page ; pour /s/:id, le titre du sondage
 // est glissé dans l'aperçu du lien (sauf s'il est protégé par un code).
@@ -26,7 +26,7 @@
 
 import { verifyIdToken } from './auth.js';
 import {
-  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS,
+  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
   norm, weekday, parseYmd, ymd, buildSlots, slotsKey, isLate,
 } from '../public/shared.js';
 
@@ -89,7 +89,7 @@ const PARIS_TZ = [
 ];
 const icsStamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const pollUrlOf = (url, id) => `${url.origin}/s/${id}`;
-// Un repas décidé. L'identifiant ne dépend que du sondage : si la date change, l'agenda déplace le même événement.
+// Une date choisie. L'identifiant ne dépend que du sondage : si la date change, l'agenda déplace le même événement.
 function icsEvent(id, cfg, slot, pollUrl, stampMs) {
   const day = ymd(slot.d);
   const hours = MOMENT_HOURS[slot.t];
@@ -99,7 +99,7 @@ function icsEvent(id, cfg, slot, pollUrl, stampMs) {
   const details = (cfg.n ? cfg.n + '\n\n' : '') + 'Horaires indicatifs. Sondage : ' + pollUrl;
   return [
     'BEGIN:VEVENT',
-    `UID:${id}@on-mange-quand`,
+    `UID:${id}@on-mange-quand`, // ancien nom du projet, gardé : sinon les agendas verraient de nouveaux événements
     `DTSTAMP:${icsStamp(stampMs)}`,
     ...when,
     `SUMMARY:${icsText(cfg.t)}`,
@@ -113,7 +113,7 @@ function icsEvent(id, cfg, slot, pollUrl, stampMs) {
 function icsCalendar(events, extra = []) {
   const timed = events.some((ev) => ev.some((l) => l.startsWith('DTSTART;TZID')));
   const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//On mange quand//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Dispos//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
     ...extra,
     ...(timed ? PARIS_TZ : []),
     ...events.flat(),
@@ -121,11 +121,11 @@ function icsCalendar(events, extra = []) {
   ];
   return lines.map(foldLine).join('\r\n') + '\r\n';
 }
-const fileSlug = (t) => norm(t).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'repas';
+const fileSlug = (t) => norm(t).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'dispos';
 
 /* ---------- Réglages d'un sondage ---------- */
 // Champs : t nom, n précisions, l lieu, ic pictogramme, s/e période, m moments par jour de la semaine,
-// x jours exclus, a jours ajoutés (ancienne forme), o jours réglés à part, dl date limite de réponse, q nombre minimum de convives,
+// x jours exclus, a jours ajoutés (ancienne forme), o jours réglés à part, dl date limite de réponse, q nombre minimum de personnes,
 // g invités attendus, r invités indispensables. Les champs facultatifs vides ne sont pas enregistrés.
 function validateConfig(b) {
   const s = parseYmd(b.s), e = parseYmd(b.e);
@@ -141,7 +141,7 @@ function validateConfig(b) {
     ? [...new Set(list.filter((o) => Number.isInteger(o) && o >= 0 && o <= e - s && keep(o)))].sort((p, q) => p - q)
     : []);
   const cfg = {
-    t: cleanText(b.t, 80) || 'Repas entre amis',
+    t: cleanText(b.t, 80) || DEFAULT_TITLE,
     n: cleanText(b.n, 160),
     s: ymd(s),
     e: ymd(e),
@@ -231,6 +231,7 @@ async function sha256Hex(text) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 // La base ne garde qu'une empreinte de la clé d'organisation, jamais la clé.
+// Le préfixe garde l'ancien nom du projet : le changer rendrait les clés déjà données inutilisables.
 const keyHash = (id, key) => sha256Hex(`on-mange-quand|cle|${id}|${key}`);
 
 // Règles :
@@ -270,6 +271,7 @@ function cleanPin(v) {
   return pin;
 }
 // Le cookie ne contient pas le code mais une empreinte : il ne vaut plus rien si l'organisateur change le code.
+// Même préfixe que keyHash, gardé pour ne pas invalider les cookies déjà posés.
 const pinToken = async (id, pin) => (await sha256Hex(`on-mange-quand|${id}|${pin}`)).slice(0, 32);
 const pinCookieName = (id) => `omq_pin_${id}`;
 function readCookie(request, name) {
@@ -426,7 +428,7 @@ async function handleFeed(request, env, url, parts) {
     .filter((p) => p.going)
     .map((p) => icsEvent(p.id, p.cfg, p.slot, pollUrlOf(url, p.id), p.updated));
   const body = icsCalendar(events, [
-    'X-WR-CALNAME:Repas · On mange quand ?',
+    `X-WR-CALNAME:${FEED_NAME}`,
     'X-WR-TIMEZONE:Europe/Paris',
     // Indication pour les agendas qui la suivent (Apple, Outlook) ; Google Agenda choisit son propre rythme.
     'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
@@ -618,7 +620,7 @@ async function handleApi(request, env, url) {
 
   if (action === 'evenement.ics' && method === 'GET') {
     const slot = row.final_idx == null ? null : buildSlots(cfg)[row.final_idx];
-    if (!slot) throw new HttpError(404, 'Aucun créneau n’a encore été choisi pour ce repas.');
+    if (!slot) throw new HttpError(404, 'Aucun créneau n’a encore été choisi pour ce sondage.');
     return new Response(icsCalendar([icsEvent(id, cfg, slot, pollUrlOf(url, id), now)]), {
       headers: {
         'content-type': 'text/calendar; charset=utf-8',
@@ -650,8 +652,8 @@ async function servePage(request, env, url) {
     .on('head', { element(el) { el.append('<meta name="robots" content="noindex">', { html: true }); } });
   if (title) {
     rewriter = rewriter
-      .on('title', { element(el) { el.setInnerContent(`${title} · On mange quand ?`); } })
-      .on('meta[property="og:title"]', { element(el) { el.setAttribute('content', `${title} : on mange quand ?`); } })
+      .on('title', { element(el) { el.setInnerContent(`${title} · ${SITE_NAME}`); } })
+      .on('meta[property="og:title"]', { element(el) { el.setAttribute('content', `${title} : t’es dispo quand ?`); } })
       .on('meta[property="og:description"]', { element(el) { el.setAttribute('content', 'Ajoute tes dispos en deux clics, sans compte.'); } });
   }
   const out = new Response(rewriter.transform(res).body, res);

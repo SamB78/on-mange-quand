@@ -14,8 +14,17 @@ export const MOMENT_SHORT = ['Jour', 'Matin', 'Midi', 'Aprèm', 'Soir'];
 // Horaires indicatifs de chaque moment pour l'agenda, heure de Paris (null = journée entière).
 export const MOMENT_HOURS = [null, ['0900', '1200'], ['1200', '1430'], ['1400', '1800'], ['1930', '2300']];
 
+// Nom du site, nom du lien d'agenda, nom d'un sondage laissé sans nom.
+export const SITE_NAME = 'Dispos';
+export const FEED_NAME = 'Dispos · dates choisies';
+export const DEFAULT_TITLE = 'Entre amis';
+
 // Pictogrammes proposés pour un sondage (le premier sert par défaut à l'affichage).
-export const ICONS = ['🍽️', '🍕', '🧀', '🍝', '🍣', '🌮', '🍔', '🥗', '🥘', '🔥', '🥐', '☕', '🥂', '🍻', '🎂', '🧺'];
+// On en ajoute à la fin sans en retirer : le serveur oublie un pictogramme qu'il ne connaît pas.
+export const ICONS = [
+  '🍽️', '🍕', '🧀', '🍝', '🍣', '🌮', '🍔', '🥗', '🥘', '🔥', '🥐', '☕', '🥂', '🍻', '🎂', '🧺',
+  '🎲', '🎮', '🎬', '🎤', '⚽', '🥾', '🏡', '🎉',
+];
 
 // Prénom sans accents ni majuscules : sert de clé pour reconnaître une même personne.
 export const norm = (s) =>
