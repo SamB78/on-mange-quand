@@ -25,12 +25,16 @@
     { "pattern": "dispos.day", "custom_domain": true },
     { "pattern": "www.dispos.day", "custom_domain": true }
   ],
+  // Garder l'adresse workers.dev ouverte (Cloudflare la coupe dès qu'un domaine est branché) : les anciens liens y arrivent
+  // et sont renvoyés vers SITE_HOST.
+  "workers_dev": true,
   "env": {
     // Version de test (--env test) : sa propre adresse et sa propre base, séparées de la prod.
     "test": {
       "name": "on-mange-quand-test",
       "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a", "SITE_HOST": "test.dispos.day" },
       "routes": [{ "pattern": "test.dispos.day", "custom_domain": true }],
+      "workers_dev": true,
       "triggers": { "crons": ["0 3 * * *"] },
       "d1_databases": [
         {
