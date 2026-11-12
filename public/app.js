@@ -2062,7 +2062,7 @@ function showPrivacy() {
         <li><strong>Lien d’agenda</strong> (avec un compte)&nbsp;: si vous le créez, nous gardons un jeton secret relié à votre compte. Toute personne qui a le lien voit les dates choisies de vos sondages (nom, lieu, précisions, date). Vous pouvez le changer ou le désactiver dans Mon compte&nbsp;; il est effacé avec votre compte.</li>
       </ul>
       <h2>Où sont les données</h2>
-      <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase). Les polices d’écriture sont servies par Google Fonts.</p>
+      <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase). Les polices d’écriture sont servies par le site lui-même.</p>
       <h2>Supprimer votre compte</h2>
       <p>Dans <a href="/compte">Mon compte</a>, touchez «&nbsp;Supprimer mon compte&nbsp;». Votre compte est effacé chez Firebase. Vos réponses restent dans les sondages mais ne sont plus liées à vous, et les sondages que vous organisiez restent accessibles à leurs participants, sans organisateur ni code d’accès.</p>
     </article></div>`;

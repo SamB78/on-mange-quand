@@ -53,6 +53,7 @@ Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perd
 | `public/shared.js` | Les règles des créneaux, lues par la page **et** par le serveur |
 | `public/firebase.js` | Le branchement de la connexion Firebase |
 | `src/worker.js` | Le serveur : l'API (`/api/polls`, `/api/me`) et l'aperçu des liens |
+| `public/fonts/` | Les polices (Bricolage Grotesque, Instrument Sans, licence OFL), servies par le site |
 | `src/auth.js` | Vérification des jetons de connexion Firebase |
 | `tests/` | Tests (`npm test`) |
 | `firebase.json` | Réglages de l'émulateur de connexion local |

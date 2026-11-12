@@ -11,7 +11,7 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 - Reste à essayer sur la version de test avec un vrai compte, car impossible en local : la connexion Google et la comparaison avec Google Agenda (hachures et rappel au clic).
 - Sondages créés sans compte : la clé d'organisation liée à l'appareil a été retirée, toute personne qui a le lien les gère (choix de novembre 2026 : la clé se perdait trop facilement, et le compte reste le moyen de garder la main). La colonne `polls.admin_key` reste en base, plus lue ni écrite.
 - Le projet s'appelait « On mange quand ? » et s'appelle maintenant **Dispos** ; domaine visé `dispos.day`, pas encore acheté ni branché sur le worker.
-- Pistes notées, non faites : héberger les polices dans `public/` (elles viennent de Google Fonts alors que le pied de page dit « sans pistage ») ; tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
+- Pistes notées, non faites : tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
 
 ## Environnements : ne jamais toucher la prod sans demande explicite
 
