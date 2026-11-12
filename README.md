@@ -34,6 +34,10 @@ Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authen
 
 Sans compte, tout le monde est à égalité : c'est simple et rien ne se perd en changeant d'appareil ou de navigateur. Pour garder la main, il suffit de se connecter et de **rattacher le sondage à son compte** (bloc « Organisation ») : on en devient le seul organisateur. Comme toute personne connectée peut le faire tant que le sondage n'a pas d'organisateur, la page demande confirmation. Un sondage clôturé, ou dont la date limite est passée, ne prend plus de réponses : sans organisateur, n'importe qui peut le rouvrir ou repousser la date.
 
+### Corbeille et conservation
+
+Supprimer un sondage le met à la corbeille : son lien affiche « Sondage supprimé », et qui le gère peut le restaurer pendant 30 jours. Chaque nuit, une tâche programmée efface pour de bon les sondages restés plus de 30 jours dans la corbeille, et ceux dont la dernière date proposée est passée depuis 6 mois sans modification depuis, avec leurs réponses. Les deux durées sont dans `public/shared.js` (`TRASH_DAYS`, `KEEP_MONTHS`).
+
 ### Code d'accès
 
 Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perdu : l'organisateur le retrouve sur la page du sondage. Une fois le bon code saisi, le navigateur garde un cookie propre au sondage ; si l'organisateur change le code, chacun doit saisir le nouveau. Après 5 essais en 15 minutes depuis une même adresse IP, les essais sont bloqués jusqu'à la fin de ces 15 minutes.

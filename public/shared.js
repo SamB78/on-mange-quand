@@ -19,6 +19,11 @@ export const SITE_NAME = 'Dispos';
 export const FEED_NAME = 'Dispos · dates choisies';
 export const DEFAULT_TITLE = 'Entre amis';
 
+// Conservation (tâche programmée du serveur, chaque nuit) : un sondage supprimé reste TRASH_DAYS jours dans la corbeille ;
+// un sondage dont la dernière date proposée est passée depuis KEEP_MONTHS mois, et qui n'a pas changé depuis, est effacé.
+export const TRASH_DAYS = 30;
+export const KEEP_MONTHS = 6;
+
 // Pictogrammes proposés pour un sondage (le premier sert par défaut à l'affichage).
 // On en ajoute à la fin sans en retirer : le serveur oublie un pictogramme qu'il ne connaît pas.
 export const ICONS = [

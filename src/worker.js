@@ -9,7 +9,8 @@
 //   PUT    /api/polls/:id                 modifier les réglages (qui gère le sondage)
 //   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (qui gère le sondage)
 //   POST   /api/polls/:id/claim           devenir l'organisateur d'un sondage qui n'en a pas (toute personne connectée)
-//   DELETE /api/polls/:id                 supprimer le sondage (qui gère le sondage)
+//   DELETE /api/polls/:id                 mettre le sondage à la corbeille, 30 jours (qui gère le sondage)
+//   POST   /api/polls/:id/restore         sortir le sondage de la corbeille (qui gère le sondage)
 //   GET    /api/polls/:id/evenement.ics   le créneau choisi, à ajouter dans un agenda
 //   GET    /api/me/polls                  les sondages du compte connecté
 //   GET    /api/me/agenda                 le lien d'agenda personnel du compte ({ url } ou { url: null })
@@ -26,6 +27,7 @@
 import { verifyIdToken } from './auth.js';
 import {
   DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
+  TRASH_DAYS, KEEP_MONTHS,
   norm, weekday, parseYmd, ymd, buildSlots, slotsKey, isLate,
 } from '../public/shared.js';
 
@@ -234,7 +236,7 @@ async function currentUser(request, env, url) {
 }
 
 async function loadPoll(env, id) {
-  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin FROM polls WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin, deleted_at FROM polls WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   return row;
 }
@@ -362,7 +364,7 @@ async function accountPolls(env, uid) {
             (SELECT COUNT(*) FROM answers a WHERE a.poll_id = p.id) AS answers,
             (SELECT GROUP_CONCAT(a.ans) FROM answers a WHERE a.poll_id = p.id AND a.uid = ?1) AS mine
        FROM polls p
-      WHERE p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1)
+      WHERE p.deleted_at IS NULL AND (p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1))
       ORDER BY p.updated_at DESC
       LIMIT 100`
   ).bind(uid).all();
@@ -495,6 +497,16 @@ async function handleApi(request, env, url) {
   const now = Date.now();
   const reply = (r, status) => pollJson(env, request, url, r, acc, status);
 
+  // Sondage dans la corbeille : rien n'est lisible ni modifiable ; qui le gère peut le restaurer pendant TRASH_DAYS jours.
+  if (row.deleted_at) {
+    if (action === 'restore' && method === 'POST' && acc.manage) {
+      await env.DB.prepare('UPDATE polls SET deleted_at = NULL, updated_at = ? WHERE id = ?').bind(now, id).run();
+      return reply({ ...row, deleted_at: null });
+    }
+    throw new HttpError(410, 'Ce sondage a été supprimé.', { deleted: true, canRestore: acc.manage, until: row.deleted_at + TRASH_DAYS * DAY_MS });
+  }
+  if (action === 'restore') throw new HttpError(409, 'Ce sondage n’est pas dans la corbeille.');
+
   if (action === 'pin') {
     if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
     if (row.pin && !acc.owner) await checkPin(env, request, row, String((await readBody(request)).pin ?? '').trim());
@@ -542,12 +554,9 @@ async function handleApi(request, env, url) {
 
     if (method === 'DELETE') {
       manageOnly('supprimer le sondage');
-      await env.DB.batch([
-        env.DB.prepare('DELETE FROM answers WHERE poll_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM polls WHERE id = ?').bind(id),
-      ]);
-      return json({ deleted: true });
+      // À la corbeille seulement : la tâche programmée l'effacera pour de bon après TRASH_DAYS jours.
+      await env.DB.prepare('UPDATE polls SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(now, now, id).run();
+      return json({ deleted: true, canRestore: true, until: now + TRASH_DAYS * DAY_MS });
     }
     throw new HttpError(405, 'Méthode non autorisée.');
   }
@@ -674,8 +683,8 @@ async function servePage(request, env, url) {
   if (!match || res.status !== 200) return res;
   let title = '';
   try {
-    const row = await env.DB.prepare('SELECT config, pin FROM polls WHERE id = ?').bind(match[1]).first();
-    if (row && !row.pin) title = JSON.parse(row.config).t || '';
+    const row = await env.DB.prepare('SELECT config, pin, deleted_at FROM polls WHERE id = ?').bind(match[1]).first();
+    if (row && !row.pin && !row.deleted_at) title = JSON.parse(row.config).t || '';
   } catch (e) {
     // base indisponible : la page s'affiche quand même, avec son aperçu habituel
   }
@@ -694,8 +703,29 @@ async function servePage(request, env, url) {
   return out;
 }
 
+// Effacement automatique (tâche programmée, wrangler.jsonc) : corbeille de plus de TRASH_DAYS jours, et sondages
+// dont la dernière date proposée (e) est passée depuis KEEP_MONTHS mois sans modification depuis. Réponses comprises.
+export async function purge(env, now = Date.now()) {
+  const cutoff = new Date(now);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - KEEP_MONTHS);
+  const where = `(deleted_at IS NOT NULL AND deleted_at < ?1)
+              OR (json_extract(config, '$.e') < ?2 AND updated_at < ?3)`;
+  const args = [now - TRASH_DAYS * DAY_MS, ymd(Math.floor(cutoff.getTime() / DAY_MS)), cutoff.getTime()];
+  const [answers, tries, polls] = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM answers WHERE poll_id IN (SELECT id FROM polls WHERE ${where})`).bind(...args),
+    env.DB.prepare(`DELETE FROM pin_tries WHERE poll_id IN (SELECT id FROM polls WHERE ${where})`).bind(...args),
+    env.DB.prepare(`DELETE FROM polls WHERE ${where}`).bind(...args),
+  ]);
+  const done = { polls: polls.meta.changes, answers: answers.meta.changes, pinTries: tries.meta.changes };
+  console.log('Effacement automatique', JSON.stringify(done));
+  return done;
+}
+
 export default {
   async fetch(request, env) {
     return secured(await route(request, env));
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(purge(env));
   },
 };

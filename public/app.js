@@ -1,7 +1,7 @@
 // La page de « Dispos » : accueil, création, sondage, compte. Sans dépendance ni étape de build.
 // Les règles des créneaux viennent de shared.js, le même fichier que lit le serveur.
 import {
-  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
+  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, SITE_NAME, FEED_NAME, DEFAULT_TITLE, TRASH_DAYS, KEEP_MONTHS,
   MOMENTS, MOMENT_SHORT, MOMENT_HOURS, ICONS, norm, weekday, parseYmd, ymd, buildSlots, slotsKey,
 } from '/shared.js';
 
@@ -203,6 +203,7 @@ async function api(method, path, body, retry = true) {
     const err = new Error((data && data.error) || 'Le serveur a rencontré un problème. Réessayez dans un instant.');
     err.status = res.status;
     err.pin = !!(data && data.pin); // sondage protégé : il faut (re)donner le code
+    err.deleted = data && data.deleted ? data : null; // sondage à la corbeille : { canRestore, until }
     throw err;
   }
   return data;
@@ -279,9 +280,10 @@ function slotCal(slots, pillHTML, opts) {
 }
 
 /* ---------- État ---------- */
-let view = null;      // 'home' | 'create' | 'edit' | 'poll' | 'pin' | 'loading' | 'error' | 'account' | 'privacy'
+let view = null;      // 'home' | 'create' | 'edit' | 'poll' | 'pin' | 'deleted' | 'loading' | 'error' | 'account' | 'privacy'
 let lastRoute = null;
 let pinFor = null;    // sondage dont on demande le code
+let deletedFor = null; // sondage affiché comme supprimé (corbeille)
 let poll = null;      // { st, example, slots }
 let ui = freshUi();
 let busy = false;
@@ -337,6 +339,7 @@ function onAuthChanged() {
   account.feed = undefined; // le lien d'agenda est propre au compte : on le relit
   if (view === 'poll' && poll && !poll.example) refresh(true);
   else if (view === 'pin' && pinFor) loadPoll(pinFor); // l'organisateur passe sans code
+  else if (view === 'deleted' && deletedFor) loadPoll(deletedFor); // l'organisateur peut alors le restaurer
   else if (view === 'create') showCreate();
   else if (view === 'home') showHome();
   else if (view === 'account') showAccount();
@@ -931,6 +934,7 @@ async function loadPoll(id) {
   } catch (err) {
     if (lastRoute !== here) return;
     if (err.pin) { showPin(id); return; }
+    if (err.deleted) { showDeleted(id, err.deleted); return; }
     if (err.status === 404) forgetPoll(id);
     view = 'error';
     document.title = SITE_NAME;
@@ -955,6 +959,30 @@ function openPoll(st) {
 
 /* ---------- Vue : code d'accès ---------- */
 // Le sondage en cours et la réponse commencée restent en mémoire : ils reviennent une fois le bon code donné.
+// Sondage à la corbeille : récupérable pendant TRASH_DAYS jours par qui le gère, puis effacé pour de bon.
+function showDeleted(id, info) {
+  view = 'deleted';
+  deletedFor = id;
+  stopRefresh();
+  forgetPoll(id);
+  document.title = 'Sondage supprimé · ' + SITE_NAME;
+  const until = info.until ? fmt(fLong, Math.floor(info.until / DAY_MS)) : '';
+  app.innerHTML = `<div class="page narrow"><section class="state">
+    <h1>Sondage supprimé</h1>
+    <p class="muted">Il reste dans la corbeille${until ? ` jusqu’au ${until}` : ''}, puis il sera effacé pour de bon, avec toutes ses réponses.</p>
+    ${info.canRestore ? '' : '<p class="hint">Seul son organisateur peut le restaurer.</p>'}
+    <div class="actions">${info.canRestore ? `<button type="button" class="btn primary" data-act="restore" data-id="${esc(id)}">Restaurer le sondage</button>` : ''}<a class="btn" href="/">Accueil</a></div>
+  </section></div>`;
+}
+function restorePoll(btn) {
+  const id = btn.dataset.id;
+  return runAction(btn, 'Restauration…', async () => {
+    const st = await api('POST', '/polls/' + id + '/restore');
+    openPoll(st);
+    showToast('Sondage restauré.');
+  });
+}
+
 function showPin(id, msg) {
   view = 'pin';
   pinFor = id;
@@ -1590,7 +1618,7 @@ function orgHTML() {
       <button type="button" class="btn sm" data-act="duplicate">${icon('copy', 16)}Dupliquer</button>
     </div>
     ${ui.pollDelAsk
-      ? '<div class="confirm"><span>Supprimer le sondage et toutes ses réponses&nbsp;?</span><button type="button" class="btn sm danger" data-act="poll-del-confirm">Supprimer</button><button type="button" class="btn sm" data-act="poll-del-cancel">Annuler</button></div>'
+      ? `<div class="confirm"><span>Mettre le sondage à la corbeille&nbsp;? Il restera récupérable ${TRASH_DAYS}&nbsp;jours, puis sera effacé avec toutes ses réponses.</span><button type="button" class="btn sm danger" data-act="poll-del-confirm">Supprimer</button><button type="button" class="btn sm" data-act="poll-del-cancel">Annuler</button></div>`
       : `<button type="button" class="linkbtn danger" data-act="poll-del-ask">${icon('trash', 15)}Supprimer le sondage</button>`}
   </section>`;
 }
@@ -1717,10 +1745,10 @@ function toggleClosed(btn) {
 function deletePoll(btn) {
   const id = poll.st.i;
   return runAction(btn, 'Suppression…', async () => {
-    await api('DELETE', '/polls/' + id);
-    forgetPoll(id);
-    showToast('Sondage supprimé.');
-    go('/');
+    const info = await api('DELETE', '/polls/' + id);
+    ui.pollDelAsk = false;
+    showDeleted(id, info);
+    showToast('Sondage mis à la corbeille.');
   });
 }
 function claimPoll(btn) {
@@ -1848,6 +1876,8 @@ async function refresh(force) {
   } catch (e) {
     // Le code a changé : on le redemande, sauf si une réponse est en cours (elle le demandera à l'enregistrement).
     if (e.pin && view === 'poll' && poll && poll.st.i === id && !ui.open) showPin(id);
+    // Quelqu'un l'a mis à la corbeille entre-temps.
+    if (e.deleted && view === 'poll' && poll && poll.st.i === id) showDeleted(id, e.deleted);
     // sinon, on réessaiera au prochain passage
   }
 }
@@ -2175,6 +2205,7 @@ document.addEventListener('click', (ev) => {
     case 'duplicate': duplicatePoll(); break;
     /* sondage */
     case 'retry': loadPoll(el.dataset.id); break;
+    case 'restore': restorePoll(el); break;
     case 'open-answer': {
       openAnswer(el.dataset.name || null); renderPoll(); scrollToId('answer');
       const n = $('#ans-name'); if (n && !el.dataset.name) n.focus({ preventScroll: true });
