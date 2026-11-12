@@ -3,6 +3,14 @@
 Sondage de dispos pour fixer la date d'un repas entre amis. Tout marche sans compte ; un compte Firebase, facultatif, donne les droits d'organisateur. Interface et textes en français.
 Le fonctionnement pour l'utilisateur est décrit dans le README.
 
+## Où en est le projet (12 novembre 2026)
+
+- `develop` et la version de test portent la **refonte** de novembre 2026 : page découpée en fichiers, création en 3 étapes, clé d'organisation, jours réglés à part, réponse par appuis successifs. C'est la version de référence.
+- `main` et la prod ont plusieurs versions de retard (première version avec serveur : ni comptes, ni code d'accès, ni agenda, ni refonte). Le passage en prod appliquera donc toutes les migrations d'un coup ; il n'a pas encore été demandé.
+- Les sondages créés avant la refonte étaient des essais : pas de compatibilité à préserver pour eux (c'est pour cela que « Journée » est aussi imposée par le serveur).
+- Reste à essayer sur la version de test avec un vrai compte, car impossible en local : la connexion Google et la comparaison avec Google Agenda (hachures et rappel au clic).
+- Pistes notées, non faites : héberger les polices dans `public/` (elles viennent de Google Fonts alors que le pied de page dit « sans pistage ») ; tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
+
 ## Environnements : ne jamais toucher la prod sans demande explicite
 
 | | Branche | Adresse | Base D1 |
@@ -19,7 +27,7 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 
 ## Tester en local
 
-`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons et les règles partagées. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur.
+`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons et les règles partagées. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
 
 ## Code
 
@@ -32,6 +40,14 @@ Aucune dépendance ni étape de build : `public/` est servi tel quel.
 - `migrations/` : une migration par changement de base, jamais modifiée une fois appliquée en prod.
 
 Adresses : la page lit `location.pathname` (History API). Les anciens liens `/#<id>` sont renvoyés vers `/s/<id>`. Les liens internes sont absolus (`/app.js`, `/compte`), car la page est servie sous plusieurs chemins.
+
+La page (`public/app.js`), ce qu'il faut savoir avant d'y toucher :
+- Tout se redessine en HTML par gabarits ; les clics passent par un seul écouteur sur `document`, qui lit `data-act` (un `case` par action).
+- Création : le brouillon (`draft`) garde les règles par jour de la semaine dans `m` et les jours réglés à part dans la table `o` (jour → moments, `0` = exclu). `draftPayload` les range en `x` (exclus) et `o` pour le serveur. Toucher un jour de l'aperçu ouvre un `<dialog>` (`openDay`) où l'on choisit ses moments. « Journée » et les autres moments s'excluent (`toggleBit`).
+- Jours fériés : un encadré propose de les ouvrir à tous les moments du sondage s'ils tombent hors des jours choisis ou un jour où seule une partie des moments est proposée.
+- Réponse : chaque appui fait tourner un créneau, pas dispo → dispo → si besoin → pas dispo (`NEXT_VALUE`, `tapValue`). Un jour de la semaine ou un moment entier tourne en bloc (`fillWhere`). À la souris, glisser applique la valeur du créneau de départ.
+- Créneau déjà pris (agenda Google ou autre repas décidé du compte, `conflictOf`) : hachures rouge pâle (`.pill.ans.busy`). S'y dire dispo affiche un rappel : une bulle accrochée au créneau à la souris (`showTip`), le message du bas de l'écran au doigt (`showToast`).
+- Mémoire du navigateur : `on-mange-quand:v2` (sondages ouverts, prénom, clés d'organisation) et `on-mange-quand:theme`.
 
 Réglages d'un sondage (`polls.config`, validés par `validateConfig`) :
 - `t` nom, `n` précisions, `l` lieu, `ic` pictogramme (liste `ICONS`).
