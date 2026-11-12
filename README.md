@@ -26,12 +26,13 @@ Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authen
 |---|---|---|
 | Ouvrir le sondage | tout le monde, avec le lien | avec le lien, plus le code s'il y en a un ; l'organisateur toujours, sans code |
 | Répondre | tout le monde (sauf s'il est clôturé ou la date limite passée) | pareil |
-| Modifier une réponse | donnée sans compte : tout le monde ; avec un compte : son auteur, et qui gère le sondage | pareil |
+| Modifier une réponse | donnée sans compte : tout le monde ; avec un compte : son auteur | pareil, et l'organisateur, même clôturé |
 | Choisir la date finale | tout le monde | l'organisateur |
-| Modifier les réglages, clôturer, supprimer | depuis l'appareil qui a créé le sondage | l'organisateur, depuis tous ses appareils |
+| Modifier les réglages, clôturer, rouvrir, supprimer | tout le monde, avec le lien | l'organisateur, depuis tous ses appareils |
+| Devenir l'organisateur | toute personne connectée (bloc « Organisation », avec confirmation) | — |
 | Ajouter, changer ou retirer le code d'accès | personne | l'organisateur |
 
-Un sondage créé sans compte laisse dans le navigateur de son créateur une **clé d'organisation** : c'est elle qui permet de le gérer depuis cet appareil. En se connectant, le créateur peut le **rattacher à son compte** (bloc « Organisation ») : il en devient l'organisateur et la clé ne sert plus. Les sondages créés avant l'arrivée des clés n'ont ni organisateur ni clé : leurs réglages ne changent plus.
+Sans compte, tout le monde est à égalité : c'est simple et rien ne se perd en changeant d'appareil ou de navigateur. Pour garder la main, il suffit de se connecter et de **rattacher le sondage à son compte** (bloc « Organisation ») : on en devient le seul organisateur. Comme toute personne connectée peut le faire tant que le sondage n'a pas d'organisateur, la page demande confirmation. Un sondage clôturé, ou dont la date limite est passée, ne prend plus de réponses : sans organisateur, n'importe qui peut le rouvrir ou repousser la date.
 
 ### Code d'accès
 

@@ -1,15 +1,15 @@
 // Serveur de « Dispos » : sert la page (public/) et l'API des sondages.
 //
-//   POST   /api/polls                     créer un sondage (organisateur = compte connecté ; sinon une clé d'organisation est rendue)
+//   POST   /api/polls                     créer un sondage (organisateur = compte connecté ; sans compte, tout le monde le gère)
 //   GET    /api/polls/:id                 lire un sondage et ses réponses
 //   POST   /api/polls/:id/pin             donner le code d'accès { pin } ; le bon code pose un cookie pour ce sondage
 //   PUT    /api/polls/:id/answers         ajouter ou modifier une réponse { name, ans, note?, prev?, slotsKey? }
 //   DELETE /api/polls/:id/answers         supprimer une réponse { name }
 //   PUT    /api/polls/:id/final           choisir le créneau final { i } (-1 pour annuler)
-//   PUT    /api/polls/:id                 modifier les réglages (organisateur)
-//   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (organisateur)
-//   POST   /api/polls/:id/claim           rattacher à son compte un sondage créé sans compte (clé d'organisation + connexion)
-//   DELETE /api/polls/:id                 supprimer le sondage (organisateur)
+//   PUT    /api/polls/:id                 modifier les réglages (qui gère le sondage)
+//   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (qui gère le sondage)
+//   POST   /api/polls/:id/claim           devenir l'organisateur d'un sondage qui n'en a pas (toute personne connectée)
+//   DELETE /api/polls/:id                 supprimer le sondage (qui gère le sondage)
 //   GET    /api/polls/:id/evenement.ics   le créneau choisi, à ajouter dans un agenda
 //   GET    /api/me/polls                  les sondages du compte connecté
 //   GET    /api/me/agenda                 le lien d'agenda personnel du compte ({ url } ou { url: null })
@@ -22,7 +22,6 @@
 // est glissé dans l'aperçu du lien (sauf s'il est protégé par un code).
 //
 // Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.
-// Clé d'organisation (sondage créé sans compte) : en-tête « X-OMQ-Key », gardée par le navigateur du créateur.
 
 import { verifyIdToken } from './auth.js';
 import {
@@ -32,7 +31,6 @@ import {
 
 const MAX_BODY = 20000;
 const ID_RE = /^[a-z2-7]{10}$/;
-const KEY_RE = /^[a-z2-7]{24}$/;
 const FEED_FILE_RE = /^([a-z2-7]{32})\.ics$/; // adresse du lien d'agenda : jeton secret + .ics
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const PIN_RE = /^\d{4,6}$/;
@@ -221,7 +219,7 @@ async function currentUser(request, env, url) {
 }
 
 async function loadPoll(env, id) {
-  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin, admin_key FROM polls WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin FROM polls WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   return row;
 }
@@ -230,33 +228,25 @@ async function sha256Hex(text) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-// La base ne garde qu'une empreinte de la clé d'organisation, jamais la clé.
-// Le préfixe garde l'ancien nom du projet : le changer rendrait les clés déjà données inutilisables.
-const keyHash = (id, key) => sha256Hex(`on-mange-quand|cle|${id}|${key}`);
 
 // Règles :
 // - sondage avec organisateur (créé en étant connecté, ou rattaché depuis) : lui seul choisit la date, modifie,
 //   clôture ou supprime ; lui seul peut poser un code d'accès ;
-// - sondage sans organisateur : tout le monde répond et choisit la date ; le navigateur qui l'a créé garde une
-//   clé d'organisation qui permet de le modifier, le clôturer, le supprimer ou le rattacher à un compte.
-//   Les sondages d'avant les clés n'en ont pas : leurs réglages ne changent plus ;
-// - une réponse donnée en étant connecté n'est modifiable que par son auteur ou par qui gère le sondage ;
-// - sondage clôturé ou date limite passée : seul qui gère le sondage modifie encore les réponses ;
+// - sondage sans organisateur (créé sans compte) : toute personne qui a le lien répond, choisit la date, le modifie,
+//   le clôture, le rouvre ou le supprime ; toute personne connectée peut en devenir l'organisateur ;
+// - une réponse donnée en étant connecté n'est modifiable que par son auteur ou par l'organisateur ;
+// - sondage clôturé ou date limite passée : seul l'organisateur modifie encore les réponses (sans organisateur,
+//   personne : il faut d'abord rouvrir le sondage ou repousser la date limite) ;
 // - sondage protégé par un code : rien n'est lisible ni modifiable sans le code, sauf pour l'organisateur.
 const isOwner = (row, user) => !!(row.owner_uid && user && row.owner_uid === user.uid);
-// acc = { user, owner, admin } : admin = organisateur connecté, ou porteur de la clé d'un sondage sans organisateur.
-async function accessOf(request, row, user) {
+// acc = { user, owner, manage } : manage = peut modifier, clôturer, supprimer (l'organisateur ; sans organisateur, tout le monde).
+function accessOf(row, user) {
   const owner = isOwner(row, user);
-  let admin = owner;
-  if (!owner && !row.owner_uid && row.admin_key) {
-    const key = request.headers.get('x-omq-key') || '';
-    admin = KEY_RE.test(key) && (await keyHash(row.id, key)) === row.admin_key;
-  }
-  return { user, owner, admin };
+  return { user, owner, manage: owner || !row.owner_uid };
 }
 const isFrozen = (row, cfg) => !!row.closed || isLate(cfg);
 function canEditAnswer(row, cfg, acc, answer) {
-  if (acc.admin) return true;
+  if (acc.owner) return true;
   if (isFrozen(row, cfg)) return false;
   if (!answer || !answer.uid) return true;
   return !!acc.user && answer.uid === acc.user.uid;
@@ -271,7 +261,7 @@ function cleanPin(v) {
   return pin;
 }
 // Le cookie ne contient pas le code mais une empreinte : il ne vaut plus rien si l'organisateur change le code.
-// Même préfixe que keyHash, gardé pour ne pas invalider les cookies déjà posés.
+// Le préfixe garde l'ancien nom du projet : le changer invaliderait les cookies déjà posés.
 const pinToken = async (id, pin) => (await sha256Hex(`on-mange-quand|${id}|${pin}`)).slice(0, 32);
 const pinCookieName = (id) => `omq_pin_${id}`;
 function readCookie(request, name) {
@@ -327,7 +317,7 @@ async function pollResponse(env, row, acc) {
     f: row.final_idx ?? -1,
     owned: !!row.owner_uid,
     isOwner: acc.owner,
-    isAdmin: acc.admin,
+    canManage: acc.manage,
     closed: !!row.closed,
     late: isLate(cfg),
     hasPin: !!row.pin,
@@ -456,23 +446,18 @@ async function handleApi(request, env, url) {
     if (pin && !user) throw new HttpError(400, 'Connectez-vous pour protéger le sondage par un code : vous pourrez toujours le retrouver.');
     const id = newId();
     const now = Date.now();
-    // Sans compte, le navigateur du créateur reçoit une clé d'organisation, une seule fois.
-    const key = user ? null : newId(24);
-    const row = {
-      id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0, pin,
-      admin_key: key ? await keyHash(id, key) : null,
-    };
-    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, pin, admin_key, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?)')
-      .bind(id, row.config, row.owner_uid, pin, row.admin_key, now, now)
+    const row = { id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0, pin };
+    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, pin, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
+      .bind(id, row.config, row.owner_uid, pin, now, now)
       .run();
-    return pollJson(env, request, url, row, { user, owner: !!user, admin: true }, 201, key ? { key } : {});
+    return pollJson(env, request, url, row, accessOf(row, user), 201);
   }
 
   const id = parts[2];
   if (!ID_RE.test(id)) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   const row = await loadPoll(env, id);
   const cfg = JSON.parse(row.config);
-  const acc = await accessOf(request, row, user);
+  const acc = accessOf(row, user);
   const action = parts[3] || '';
   const now = Date.now();
   const reply = (r, status) => pollJson(env, request, url, r, acc, status);
@@ -487,14 +472,11 @@ async function handleApi(request, env, url) {
   }
 
   const touch = env.DB.prepare('UPDATE polls SET updated_at = ? WHERE id = ?').bind(now, id);
-  const adminOnly = (what) => {
-    if (acc.admin) return;
-    throw new HttpError(403, row.owner_uid
-      ? `Seul l’organisateur peut ${what}.`
-      : `Ce sondage a été créé sans compte : on ne peut ${what} que depuis l’appareil qui l’a créé.`);
+  const manageOnly = (what) => {
+    if (!acc.manage) throw new HttpError(403, `Seul l’organisateur peut ${what}.`);
   };
   const notFrozen = () => {
-    if (acc.admin) return;
+    if (acc.owner) return;
     if (row.closed) throw new HttpError(403, 'Le sondage est clôturé : les réponses ne peuvent plus changer.');
     if (isLate(cfg)) throw new HttpError(403, 'La date limite de réponse est passée : les réponses ne peuvent plus changer.');
   };
@@ -503,7 +485,7 @@ async function handleApi(request, env, url) {
     if (method === 'GET') return reply(row);
 
     if (method === 'PUT') {
-      adminOnly('modifier le sondage');
+      manageOnly('modifier le sondage');
       const body = await readBody(request);
       const next = validateConfig(body);
       // Le code reste réservé à l'organisateur connecté. Sans champ « pin », il ne change pas ; vide, il est retiré.
@@ -526,7 +508,7 @@ async function handleApi(request, env, url) {
     }
 
     if (method === 'DELETE') {
-      adminOnly('supprimer le sondage');
+      manageOnly('supprimer le sondage');
       await env.DB.batch([
         env.DB.prepare('DELETE FROM answers WHERE poll_id = ?').bind(id),
         env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ?').bind(id),
@@ -603,19 +585,20 @@ async function handleApi(request, env, url) {
   }
 
   if (action === 'closed' && method === 'PUT') {
-    adminOnly('clôturer le sondage');
+    manageOnly('clôturer le sondage');
     const closed = (await readBody(request)).closed ? 1 : 0;
     await env.DB.prepare('UPDATE polls SET closed = ?, updated_at = ? WHERE id = ?').bind(closed, now, id).run();
     return reply({ ...row, closed });
   }
 
   if (action === 'claim' && method === 'POST') {
-    // Le créateur d'un sondage sans compte se connecte et en devient l'organisateur : la clé ne sert plus.
+    // Sondage sans organisateur : la première personne connectée qui le demande en devient l'organisateur.
     if (!user) throw new HttpError(401, 'Connectez-vous pour rattacher ce sondage à votre compte.');
     if (row.owner_uid) throw new HttpError(409, 'Ce sondage a déjà un organisateur.');
-    if (!acc.admin) throw new HttpError(403, 'Ce sondage ne peut être rattaché que depuis l’appareil qui l’a créé.');
-    await env.DB.prepare('UPDATE polls SET owner_uid = ?, admin_key = NULL, updated_at = ? WHERE id = ? AND owner_uid IS NULL').bind(user.uid, now, id).run();
-    return pollJson(env, request, url, { ...row, owner_uid: user.uid, admin_key: null }, { user, owner: true, admin: true });
+    const { meta } = await env.DB.prepare('UPDATE polls SET owner_uid = ?, updated_at = ? WHERE id = ? AND owner_uid IS NULL').bind(user.uid, now, id).run();
+    if (!meta.changes) throw new HttpError(409, 'Ce sondage vient d’être rattaché par quelqu’un d’autre.');
+    const claimed = { ...row, owner_uid: user.uid };
+    return pollJson(env, request, url, claimed, accessOf(claimed, user));
   }
 
   if (action === 'evenement.ics' && method === 'GET') {
