@@ -425,7 +425,7 @@ function showHome(msg) {
       <ul class="feat-list">
         <li>${icon('rules', 22)}<h3>Des règles, pas une liste de dates</h3><p>«&nbsp;Le soir en semaine, midi et soir le week-end&nbsp;»&nbsp;: les créneaux se calculent tout seuls, jours fériés compris.</p></li>
         <li>${icon('star', 22)}<h3>Les indispensables</h3><p>Pas de raclette sans celui qui a l’appareil. Marquez qui doit être là&nbsp;: les créneaux sans eux sont écartés.</p></li>
-        <li>${icon('clock', 22)}<h3>Une date limite</h3><p>Fixez jusqu’à quand on peut répondre et combien il faut être au minimum. Fini les sondages qui traînent.</p></li>
+        <li>${icon('clock', 22)}<h3>Une date limite</h3><p>Fixez jusqu’à quand on peut répondre. Fini les sondages qui traînent.</p></li>
         <li>${icon('calendar', 22)}<h3>Branché sur votre agenda</h3><p>Comparez les créneaux avec votre agenda Google avant de répondre, puis ajoutez la date choisie en un geste.</p></li>
       </ul>
     </section>
@@ -492,6 +492,8 @@ async function loadHomePolls(mine) {
 
 /* ---------- Vue : création et modification (3 étapes) ---------- */
 const STEPS = ['Le programme', 'Les créneaux', 'Les options'];
+// « Nombre minimum de personnes » masqué pour simplifier ; un sondage qui a déjà un minimum (q) le garde et l'affiche.
+const ASK_MINIMUM = false;
 const FORMULES = [
   { label: 'Tous les soirs', sub: '7 jours sur 7', m: [SOIR, SOIR, SOIR, SOIR, SOIR, SOIR, SOIR] },
   { label: 'Soirs de semaine', sub: 'Du lundi au vendredi', m: [SOIR, SOIR, SOIR, SOIR, SOIR, 0, 0] },
@@ -549,7 +551,7 @@ function stepHTML() {
       <div class="inline"><input type="date" id="c-dl"><button type="button" class="btn quiet" data-act="dl-clear" id="c-dl-clear">Aucune</button></div>
       <p class="hint">Passé ce jour, les réponses sont figées et vous pouvez trancher.</p>
     </div>
-    <div class="field">
+    ${ASK_MINIMUM ? `<div class="field">
       <span class="label" id="c-q-l">Nombre minimum de personnes</span>
       <div class="stepper" role="group" aria-labelledby="c-q-l">
         <button type="button" class="iconbtn" data-act="q" data-d="-1" aria-label="Moins">${icon('minus')}</button>
@@ -557,7 +559,7 @@ function stepHTML() {
         <button type="button" class="iconbtn" data-act="q" data-d="1" aria-label="Plus">${icon('plus')}</button>
       </div>
       <p class="hint">Les créneaux qui n’atteignent pas ce nombre sont signalés.</p>
-    </div>
+    </div>` : ''}
     ${auth.user ? `<div class="field">
       <label for="c-pin">Code d’accès</label>
       <input type="text" id="c-pin" class="code-input" inputmode="numeric" maxlength="6" placeholder="4 à 6 chiffres" autocomplete="off" spellcheck="false">
