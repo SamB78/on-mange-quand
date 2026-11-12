@@ -2,7 +2,7 @@
 // Lancer : npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSlots, slotsKey, parseYmd, ymd, weekday, isLate, norm } from '../public/shared.js';
+import { buildSlots, slotsKey, slotTimes, slotEnd, slotId, parseYmd, ymd, weekday, isLate, norm } from '../public/shared.js';
 
 const SOIR = 16, MIDI = 4;
 
@@ -48,6 +48,36 @@ test('la clé des créneaux ne mentionne les jours ajoutés que s’il y en a', 
   assert.equal(slotsKey(base), '20261109|20261115|0.0.0.0.16.0.0|1');
   assert.equal(slotsKey({ ...base, a: [] }), slotsKey(base));
   assert.equal(slotsKey({ ...base, a: [2] }), '20261109|20261115|0.0.0.0.16.0.0|1|2');
+});
+
+test('horaires précis : un bit par plage, chaque créneau porte ses horaires', () => {
+  // Du lundi 9 au dimanche 15 novembre 2026 : 12 h – 14 h et 19 h – 21 h en semaine ; mercredi 11 à 19 h seulement.
+  const cfg = { s: '20261109', e: '20261115', k: 'h', h: [['1200', '1400'], ['1900', '2100']], m: [3, 3, 3, 3, 3, 0, 0], x: [1], o: [[2, 2]] };
+  const slots = buildSlots(cfg);
+  assert.deepEqual(slots.map((sl) => [ymd(sl.d), sl.h.join('-')]), [
+    ['20261109', '1200-1400'], ['20261109', '1900-2100'], ['20261111', '1900-2100'],
+    ['20261112', '1200-1400'], ['20261112', '1900-2100'], ['20261113', '1200-1400'], ['20261113', '1900-2100'],
+  ]);
+  assert.deepEqual(slotTimes(slots[1]), ['1900', '2100']);
+  assert.equal(slotsKey(cfg), '20261109|20261115|3.3.3.3.3.0.0|1|o2:2|h1200-1400.1900-2100');
+});
+
+test('séjours : des demi-journées depuis le début, sur plusieurs jours', () => {
+  // Période du samedi 14 novembre 2026 ; week-end du vendredi 13 soir au dimanche 15 soir, puis samedi 21 – dimanche 22.
+  const cfg = { s: '20261113', e: '20261122', k: 'j', m: [0, 0, 0, 0, 0, 0, 0], j: [[1, 5], [16, 19]] };
+  const [a, b] = buildSlots(cfg);
+  assert.deepEqual([ymd(a.d), a.ah, ymd(a.d2), a.bh], ['20261113', 1, '20261115', 1]);
+  assert.deepEqual([ymd(b.d), b.ah, ymd(slotEnd(b)), b.bh], ['20261121', 0, '20261122', 1]);
+  assert.equal(slotTimes(a), null);
+  assert.equal(slotsKey(cfg), '20261113|20261122|0.0.0.0.0.0.0||j1:5.16:19');
+});
+
+test('l’identité d’un créneau survit à une modification qui décale les index', () => {
+  const before = buildSlots({ s: '20261109', e: '20261115', k: 'h', h: [['1900', '2100']], m: [1, 0, 0, 0, 0, 0, 0] });
+  const after = buildSlots({ s: '20261109', e: '20261115', k: 'h', h: [['1200', '1400'], ['1900', '2100']], m: [3, 0, 0, 0, 0, 0, 0] });
+  assert.equal(slotId(before[0]), slotId(after[1]));
+  assert.notEqual(slotId(after[0]), slotId(after[1]));
+  assert.equal(slotId({ d: 5, t: 4 }), 'm5.4');
 });
 
 test('la date limite se juge à l’heure de Paris, jour limite compris', () => {

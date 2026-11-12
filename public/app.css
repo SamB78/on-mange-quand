@@ -463,28 +463,20 @@ input:focus { border-color: var(--ink); outline: 3px solid var(--surface-2); out
 .step[aria-current="step"] { background: var(--ink); color: var(--bg); }
 .step[aria-current="step"] .step-n { background: var(--accent); color: var(--accent-ink); }
 .step.done .step-n { background: var(--yes); color: var(--yes-ink); }
-@media (max-width: 480px) { .step:not([aria-current]) { justify-content: center; font-size: 0; gap: 0; } .steps li:has([aria-current]) { flex: 2.4; } }
+/* Quatre étapes : sous 700 px, celles qui ne sont pas en cours se réduisent à leur numéro. */
+@media (max-width: 700px) { .step:not([aria-current]) { justify-content: center; font-size: 0; gap: 0; } .steps li:has([aria-current]) { flex: 3; } }
 .wiz-body { gap: 22px; }
 .icons { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
 .icon-opt { aspect-ratio: 1; min-width: 0; border-radius: 12px; border: 1.5px solid transparent; background: var(--surface-2); font-size: 1.35rem; padding: 0; display: grid; place-items: center; }
 .icon-opt:hover { border-color: var(--line); }
 .icon-opt[aria-pressed="true"] { border-color: var(--ink); background: var(--surface); box-shadow: 0 0 0 3px var(--surface-2); }
-.formules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-@media (min-width: 600px) { .formules { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-.formule {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 14px;
-  border: 1.5px solid var(--line); background: var(--surface); min-height: 64px; line-height: 1.25;
-}
-.formule b { font-size: 0.95rem; }
-.formule small { color: var(--muted); font-size: 0.82rem; }
-button.formule:hover { border-color: var(--ink); }
-.formule[aria-pressed="true"], .formule.on-mesure { border-color: var(--accent); background: var(--accent-soft); }
-.formule[aria-pressed="true"] small, .formule.on-mesure small { color: var(--accent-deep); }
-.matrix { display: grid; grid-template-columns: 5.4rem repeat(7, minmax(0, 1fr)); gap: 5px; align-items: center; max-width: 30rem; }
-.mx-h { border: 0; background: none; padding: 4px 0; font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; border-radius: 6px; }
+.matrix { display: grid; grid-template-columns: max-content repeat(7, minmax(0, 1fr)); gap: 5px; align-items: center; max-width: 30rem; }
+.matrix .mx-h.row { padding-right: 8px; }
+.mx-h { border: 0; background: none; padding: 4px 0; min-height: 30px; font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; border-radius: 6px; }
 .mx-h.row { text-align: left; text-transform: none; letter-spacing: 0; font-size: 0.86rem; color: var(--ink); font-weight: 600; white-space: nowrap; }
 .mx-h:hover { color: var(--accent-deep); }
-.mx-c { height: 38px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); padding: 0; color: var(--accent-ink); font-weight: 800; }
+@media (max-width: 420px) { .mx-h:not(.row) { font-size: 0.66rem; letter-spacing: 0; } }
+.mx-c { min-width: 0; height: 38px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); padding: 0; color: var(--accent-ink); font-weight: 800; }
 .mx-c:hover { border-color: var(--ink); }
 .mx-c[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
 .mx-c[aria-pressed="true"]::after { content: "✓"; }
@@ -495,6 +487,123 @@ button.formule:hover { border-color: var(--ink); }
 .hols.todo { outline: 1.5px dashed var(--hol); outline-offset: -1.5px; }
 .hols b { color: var(--hol); }
 .hol-act { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.hol-list { display: flex; flex-direction: column; gap: 2px; }
+
+/* Genre de créneaux : des tuiles simples ; ses réglages s'ouvrent juste dessous, sur la même page */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 600px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tile {
+  min-width: 0; min-height: 84px; padding: 12px 10px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  font-weight: 700; font-size: 1rem; line-height: 1.2; text-align: center; text-wrap: balance; transition: border-color .15s, background-color .15s, color .15s;
+}
+.tile-ic { font-size: 1.5rem; line-height: 1; }
+.tile:hover { border-color: var(--ink); }
+.tile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-deep); }
+.settings { display: flex; flex-direction: column; gap: 22px; padding-top: 22px; border-top: 1px solid var(--line); scroll-margin-top: 84px; }
+.settings > h2:focus { outline: none; }
+.fmt-now { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; border-radius: 14px; background: var(--surface-2); }
+.fmt-now > span { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.fmt-now small { color: var(--muted); font-size: 0.86rem; }
+.wdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; max-width: 28rem; }
+.wd { min-width: 0; min-height: 44px; padding: 0; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); font-weight: 700; font-size: 0.86rem; }
+.wd:hover { border-color: var(--ink); }
+.wd[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.ranges { display: flex; flex-direction: column; gap: 8px; }
+.range { display: flex; align-items: flex-end; gap: 8px; }
+.range label { flex: 1; min-width: 0; max-width: 10rem; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); font-weight: 500; }
+.dlg .range { margin-top: 12px; }
+.switch { display: flex; align-items: flex-start; gap: 12px; font-weight: 600; font-size: 0.93rem; cursor: pointer; }
+.switch input {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; margin: 0; cursor: pointer;
+  width: 44px; height: 26px; border-radius: 999px; background: var(--line); transition: background-color .15s;
+}
+.switch input::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform .15s;
+}
+.switch input:checked { background: var(--ink); }
+.switch input:checked::after { background: var(--bg); transform: translateX(18px); }
+.switch input:focus-visible { outline: 2.5px solid var(--ink); outline-offset: 2px; }
+
+/* Curseur à deux poignées : début et fin d'une semaine ou d'un week-end, à la demi-journée près.
+   Deux curseurs natifs superposés (clavier et toucher compris) ; seules leurs poignées captent le doigt. */
+.sp { --thumb: 28px; position: relative; max-width: 30rem; }
+.sp-days { display: grid; padding-bottom: 6px; }
+.sp-days span { text-align: center; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.sp-days span.on { color: var(--accent-deep); }
+.sp-track {
+  position: relative; height: 40px; border-radius: 12px;
+  background: repeating-linear-gradient(90deg, var(--surface-2) 0 calc(100% / var(--days) - 2px), var(--surface) calc(100% / var(--days) - 2px) calc(100% / var(--days)));
+}
+.sp-fill {
+  position: absolute; top: 6px; bottom: 6px; border-radius: 9px; border: 1.5px solid var(--accent); background: var(--accent-soft);
+  left: calc(var(--s) / var(--n) * 100%); width: calc((var(--e) - var(--s)) / var(--n) * 100%);
+}
+.sp input[type="range"] {
+  position: absolute; top: 0; height: 100%; margin: 0; padding: 0;
+  left: calc(var(--thumb) / -2); width: calc(100% + var(--thumb));
+  -webkit-appearance: none; appearance: none; background: none; pointer-events: none;
+}
+.sp input.top { z-index: 2; }
+.sp input[type="range"]:focus { outline: none; }
+.sp input[type="range"]::-webkit-slider-runnable-track { height: 100%; background: none; }
+.sp input[type="range"]::-moz-range-track { background: none; }
+.sp input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; cursor: grab; width: var(--thumb); height: var(--thumb); margin-top: calc((40px - var(--thumb)) / 2);
+  border-radius: 50%; border: 2.5px solid var(--accent); background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.sp input[type="range"]::-moz-range-thumb {
+  pointer-events: auto; cursor: grab; width: var(--thumb); height: var(--thumb); box-sizing: border-box;
+  border-radius: 50%; border: 2.5px solid var(--accent); background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.sp input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--ink); }
+.sp input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--ink); }
+.sp-text { font-size: 0.93rem; color: var(--muted); }
+.sp-text b { color: var(--ink); }
+
+/* Séjours dans l'aperçu : une ligne par semaine, chaque jour coupé en deux moitiés ; un séjour s'y dessine en bande */
+.bcal { display: flex; flex-direction: column; gap: 6px; }
+.bhead, .bweek { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); }
+.bhead .cal-wd { grid-column: span 2; }
+.bweek { row-gap: 4px; }
+.bday {
+  grid-row: 1; min-width: 0; margin: 0 2.5px; padding: 3px 0; border-radius: 9px; text-align: center;
+  font-size: 0.8rem; font-weight: 700; color: var(--muted); opacity: 0.55; font-variant-numeric: tabular-nums;
+}
+.bday.in { background: var(--surface-2); color: var(--ink); opacity: 1; }
+.bday.void { background: none; }
+.bday.hol { color: var(--hol); opacity: 1; box-shadow: inset 0 0 0 1.5px var(--hol); }
+.bday.today { color: var(--accent-deep); }
+.band {
+  min-width: 0; height: 30px; margin: 0 2.5px; padding: 0 8px; border-radius: 9px;
+  border: 1.5px solid var(--accent); background: var(--accent-soft); color: var(--accent-deep);
+  font-weight: 700; font-size: 0.76rem; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+button.band:hover { border-color: var(--ink); }
+.band.own { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.band.gone { background: none; border-style: dashed; border-color: var(--muted); color: var(--muted); text-decoration: line-through; }
+.band.cut-l { margin-left: 0; border-left-style: dashed; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.band.cut-r { margin-right: 0; border-right-style: dashed; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.legend .band { display: inline-block; width: 26px; height: 14px; margin: 0 2px 0 8px; padding: 0; }
+.legend .band:first-child { margin-left: 0; }
+.sw-hol { width: 18px; height: 14px; margin-left: 8px; border-radius: 5px; box-shadow: inset 0 0 0 1.5px var(--hol); display: inline-block; }
+/* Bande de jours du dialogue d'un séjour : on touche un jour pour allonger ou raccourcir */
+.strip { display: grid; row-gap: 6px; max-width: 30rem; }
+.sd {
+  grid-row: 1; min-width: 0; min-height: 48px; margin: 0 2px; padding: 5px 0; border-radius: 10px; border: 1.5px solid transparent;
+  background: var(--surface-2); color: var(--muted); line-height: 1.15; font-variant-numeric: tabular-nums;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.sd small { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.sd b { font-size: 0.9rem; }
+.sd.on { color: var(--ink); }
+.sd.hol { box-shadow: inset 0 0 0 1.5px var(--hol); }
+.sd.hol b { color: var(--hol); }
+.sd:hover:not(:disabled) { border-color: var(--ink); }
+.sd:disabled { opacity: 0.45; cursor: not-allowed; background-image: repeating-linear-gradient(135deg, transparent 0 5px, var(--line) 5px 7px); }
+.strip .band { grid-row: 2; height: 14px; padding: 0; pointer-events: none; }
+.dlg .strip + .dlg-moments { margin-top: 12px; }
 .guests { display: flex; flex-wrap: wrap; gap: 6px; }
 .guests:empty { display: none; }
 .guest { display: inline-flex; align-items: center; gap: 2px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--surface); padding: 2px 4px; font-weight: 600; font-size: 0.92rem; }
@@ -577,6 +686,15 @@ button.pill.heat:hover { border-color: var(--ink); }
 .pill.picked { box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 4.5px var(--accent); }
 .pill.blocked { background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--surface) 38%, transparent) 5px 8px); }
 .pill.past { opacity: 0.4; }
+/* Séjour (semaine, week-end) : une ligne entière, les dates à gauche, la réponse ou le total à droite */
+.stays { display: flex; flex-direction: column; gap: 6px; max-width: 36rem; }
+.pill.row { flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; text-align: left; }
+.pill.row .pill-l { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pill.row .pill-l b { font-size: 0.95rem; }
+.pill.row .pill-l small { font-size: 0.78rem; font-weight: 600; opacity: 0.85; white-space: normal; }
+.pill.row .mk { font-size: 1.1rem; flex: none; }
+.pill.ans.s0.row .pill-l b, .pill.h0.row .pill-l b { color: var(--ink); }
+.pill.heat.row > b { font-size: 1.1rem; flex: none; }
 .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; color: var(--muted); font-size: 0.82rem; }
 .sw { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid transparent; display: inline-block; }
 .sw.h0, .sw.s0 { background: var(--surface); border-color: var(--line); }
