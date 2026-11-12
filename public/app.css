@@ -236,6 +236,17 @@ input:focus { border-color: var(--ink); outline: 3px solid var(--surface-2); out
   font-weight: 600; box-shadow: var(--shadow-lg);
 }
 .toast.err { background: var(--danger); color: #fff; }
+/* Bulle accrochée au créneau touché (rappel d'agenda, à la souris) */
+.tip {
+  position: fixed; z-index: 30; width: max-content; max-width: min(300px, calc(100vw - 16px));
+  background: var(--ink); color: var(--bg); padding: 9px 13px; border-radius: 10px;
+  font-size: 0.88rem; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-lg); pointer-events: none;
+  animation: tip-in .12s ease-out;
+}
+.tip::after { content: ""; position: absolute; left: var(--arrow, 50%); top: 100%; margin-left: -6px; border: 6px solid transparent; border-top-color: var(--ink); }
+.tip.below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: var(--ink); }
+@keyframes tip-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .tip { animation: none; } }
 
 /* ---------- Accueil ---------- */
 .landing { gap: 72px; padding-top: 40px; }
@@ -406,7 +417,9 @@ button.pill.ans:hover { border-color: var(--ink); }
 .pill.ans.s1 .mk::before { content: "✓"; }
 .pill.ans.s2 { background: var(--maybe-soft); border-color: var(--maybe); border-style: dashed; color: var(--maybe); }
 .pill.ans.s2 .mk::before { content: "~"; }
-.pill.ans.busy::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 1.5px var(--surface); }
+/* Créneau déjà pris dans l'agenda : hachures rouge pâle en diagonale par-dessus la couleur de la réponse */
+.pill.ans.busy::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, color-mix(in srgb, var(--danger) 50%, var(--surface)) 85%, transparent) 5px 8px); }
+.pill.ans.busy > * { position: relative; z-index: 1; }
 .pill.heat { border-color: transparent; }
 .pill.heat b { font-size: 0.95rem; }
 .pill.h0 { background: var(--surface); color: var(--muted); border-color: var(--line); }
@@ -478,17 +491,14 @@ button.pill.heat:hover { border-color: var(--ink); }
 .cta { display: flex; flex-direction: column; gap: 10px; }
 .okmsg { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--yes); font-weight: 700; text-align: center; }
 .answer { border: 2px solid var(--ink); }
-.brush { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.brush-b {
-  display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 6px 8px; border-radius: 12px;
-  border: 1.5px solid var(--line); background: var(--surface); font-weight: 600; font-size: 0.93rem; line-height: 1.15;
-}
-.brush-b .mk { width: 20px; height: 20px; flex: none; border-radius: 6px; border: 1.5px solid var(--line); display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; }
-.brush-b.s1 .mk { background: var(--yes); border-color: var(--yes); color: var(--yes-ink); }
-.brush-b.s1 .mk::before { content: "✓"; }
-.brush-b.s2 .mk { background: var(--maybe-soft); border: 1.5px dashed var(--maybe); color: var(--maybe); }
-.brush-b.s2 .mk::before { content: "~"; }
-.brush-b[aria-checked="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); background: var(--surface-2); }
+.turns { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.turn { display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 6px 10px; border-radius: 12px; background: var(--surface-2); font-weight: 600; font-size: 0.93rem; line-height: 1.15; }
+.turn small { display: block; color: var(--muted); font-size: 0.74rem; font-weight: 600; }
+.turn .mk { width: 22px; height: 22px; flex: none; border-radius: 6px; border: 1.5px solid var(--line); background: var(--surface); display: grid; place-items: center; font-size: 0.8rem; font-weight: 800; }
+.turn.s1 .mk { background: var(--yes); border-color: var(--yes); color: var(--yes-ink); }
+.turn.s1 .mk::before { content: "✓"; }
+.turn.s2 .mk { background: var(--maybe-soft); border: 1.5px dashed var(--maybe); color: var(--maybe); }
+.turn.s2 .mk::before { content: "~"; }
 .quick { display: flex; flex-wrap: wrap; gap: 6px; }
 .agenda-tools { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 0.88rem; color: var(--muted); }
 .agenda-tools:empty { display: none; }
