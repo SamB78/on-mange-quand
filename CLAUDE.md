@@ -1,0 +1,83 @@
+# Dispos
+
+Sondage de dispos pour fixer la date d'un moment entre amis (dîner, soirée jeux, week-end…). Tout marche sans compte ; un compte Firebase, facultatif, donne les droits d'organisateur. Interface et textes en français.
+Le fonctionnement pour l'utilisateur est décrit dans le README.
+
+## Où en est le projet (12 novembre 2026)
+
+- `develop` et la version de test portent la **refonte** de novembre 2026 : page découpée en fichiers, création en 3 étapes, jours réglés à part, réponse par appuis successifs. C'est la version de référence.
+- `main` et la prod ont plusieurs versions de retard (première version avec serveur : ni comptes, ni code d'accès, ni agenda, ni refonte). Le passage en prod appliquera donc toutes les migrations d'un coup ; il n'a pas encore été demandé.
+- Les sondages créés avant la refonte étaient des essais : pas de compatibilité à préserver pour eux (c'est pour cela que « Journée » est aussi imposée par le serveur).
+- Reste à essayer sur la version de test avec un vrai compte, car impossible en local : la connexion Google et la comparaison avec Google Agenda (hachures et rappel au clic).
+- Sondages créés sans compte : la clé d'organisation liée à l'appareil a été retirée, toute personne qui a le lien les gère (choix de novembre 2026 : la clé se perdait trop facilement, et le compte reste le moyen de garder la main). La colonne `polls.admin_key` reste en base, plus lue ni écrite.
+- Passage en prod essayé le 12 novembre 2026 sur une copie de la base prod (1 sondage, 4 réponses) : migrations 0002 à 0006 sans erreur, mêmes créneaux qu'avant, réponses intactes, anciens liens `/#…` renvoyés. La migration 0007 (corbeille) a été ajoutée depuis : une colonne seulement.
+- Le projet s'appelait « On mange quand ? » et s'appelle maintenant **Dispos**. Domaine `dispos.day` acheté chez Cloudflare le 12 novembre 2026, branché par `routes` dans `wrangler.jsonc` (`dispos.day` et `www` pour la prod, `test.dispos.day` pour le test). `SITE_HOST` fixe l'adresse publique : les pages demandées sur `workers.dev` ou `www` y sont renvoyées (`canonicalUrl`), pas l'API.
+- Avant la prod, côté utilisateur : créer l'adresse `contact@dispos.day` (affichée par les mentions légales et la confidentialité, `CONTACT` dans `app.js`), et vérifier que le compte Cloudflare porte l'identité de l'éditeur (condition pour rester anonyme dans les mentions légales).
+- Pistes notées, non faites : tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
+
+## Environnements : ne jamais toucher la prod sans demande explicite
+
+| | Branche | Adresse | Base D1 |
+|---|---|---|---|
+| Prod | `main` | https://dispos.day | `on-mange-quand` |
+| Test | `develop` | https://test.dispos.day | `on-mange-quand-test` |
+
+- La prod est utilisée par de vrais groupes. On ne déploie pas en prod, on ne modifie pas sa base et on ne pousse pas sur `main` sans que l'utilisateur le demande clairement.
+- Chaque nouveauté part de `develop` sur une branche `feature/…`, revient dans `develop`, puis s'essaie sur la version de test.
+- Passer en prod : fusionner `develop` dans `main`, puis `npm run db:remote` **avant** `npm run deploy`, car le nouveau code lit des colonnes qui doivent déjà exister.
+- `npm run deploy` et `npm run db:remote` passent par `scripts/garde-fou-prod.mjs` : ils refusent hors de `main` ou avec des modifications non commitées. Ne jamais contourner avec `npx wrangler deploy`.
+- Version de test : `npm run db:test`, puis `npm run deploy:test`. Toute commande wrangler visant le test porte `--env test`.
+- GitHub Pages sert `docs/` depuis `main` (ancienne adresse : renvoi vers `dispos.day`, plus l'ancienne version où le sondage tient dans le lien).
+
+## Tester en local
+
+`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons, les règles partagées et les en-têtes de sécurité. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
+
+## Code
+
+Aucune dépendance ni étape de build : `public/` est servi tel quel.
+
+- `public/index.html` : la coquille (barre du haut, pied de page, balises d'aperçu des liens). `public/app.css` : les styles, couleurs en jetons CSS, thèmes clair et sombre. `public/app.js` : toute la page (accueil, création en 3 étapes, sondage, compte). `public/firebase.js` : branchement de Firebase Authentication.
+- `public/shared.js` : les règles communes, importées **par la page et par le serveur** (ordre des moments, `MOMENT_HOURS`, `buildSlots`, `slotsKey`, date limite, noms affichés `SITE_NAME`, `FEED_NAME`, `DEFAULT_TITLE`). Ne jamais en recopier un morceau d'un côté ou de l'autre.
+- `src/worker.js` : l'API `/api/polls` et `/api/me` (routes listées en tête du fichier) ; rend aussi la page pour toute adresse sans extension (`/`, `/nouveau`, `/s/<id>`, `/compte`, `/confidentialite`, `/mentions-legales`, `/exemple`) et, pour `/s/<id>`, glisse le nom du sondage dans l'aperçu du lien (jamais s'il a un code). Il complète partout l'adresse de l'image d'aperçu (`og:image`), d'où `run_worker_first: ["/"]` dans `wrangler.jsonc` pour que l'accueil passe aussi par lui.
+- Image d'aperçu (`public/apercu.png`, 1200 × 630) et icônes d'écran d'accueil (`apple-touch-icon.png`, `icone-*.png`, `manifest.webmanifest`, affichage `browser` pour que la connexion Google reste dans le navigateur) : fabriquées depuis `scripts/images/` par `sh scripts/images/fabriquer.sh` (Chrome sans fenêtre).
+- `src/auth.js` : vérification des jetons Firebase (signature Google, projet, expiration). Les jetons non signés de l'émulateur ne sont acceptés qu'en local avec `AUTH_EMULATOR_LOCAL_ONLY=1`, que seul `npm run dev` fournit.
+- `migrations/` : une migration par changement de base, jamais modifiée une fois appliquée en prod.
+- Corbeille et effacement : `DELETE /api/polls/:id` ne fait que poser `polls.deleted_at`. Un sondage supprimé répond 410 `{ deleted, canRestore, until }` à toute route, sauf `POST /api/polls/:id/restore` pour qui le gère ; il disparaît des listes du compte et du lien d'agenda. Chaque nuit (`triggers.crons`, `purge()` du serveur), la corbeille de plus de `TRASH_DAYS` jours et les sondages dont la date de fin `e` est passée depuis `KEEP_MONTHS` mois sans modification depuis sont effacés, réponses comprises. Les deux durées sont dans `shared.js`, la page les affiche. En local : `wrangler dev --test-scheduled`, puis ouvrir `/__scheduled`.
+- Limite de débit maison (`tooFast`, table `rate_hits`, migration 0008) : 60 écritures par minute et 10 créations de sondage par minute (`RATE_LIMITS`), par empreinte d'adresse IP (bloc /64 en IPv6, `ipKey`). Les lectures ne sont pas comptées ; si la base répond mal, on laisse passer. La limite intégrée aux Workers (liaison `ratelimits`) a été essayée puis retirée : sur ce compte, elle répondait toujours « autorisé ». Les compteurs de plus d'une heure sont effacés par la tâche de nuit.
+- Sécurité : la politique de contenu (CSP) est une balise meta de `public/index.html` ; aucun script en ligne (le thème est posé par `public/theme.js`). Toute nouvelle ressource externe (script, connexion, iframe) doit y être ajoutée. Les autres en-têtes sont dans `public/_headers` (fichiers servis tels quels) et `SECURITY_HEADERS` du serveur, à garder identiques (`npm test` le vérifie).
+
+Ancien nom : les identifiants techniques gardent « on-mange-quand » / « omq ». Ne pas les renommer, ce qui circule déjà cesserait de marcher : mémoire du navigateur `on-mange-quand:…`, préfixe des empreintes de codes, cookie `omq_pin_`, UID des événements d'agenda. Le worker, les bases D1, le projet Firebase, le dépôt et `package.json` gardent aussi l'ancien nom (changer le worker changerait l'adresse de la prod).
+
+Adresses : la page lit `location.pathname` (History API). Les anciens liens `/#<id>` sont renvoyés vers `/s/<id>`. Les liens internes sont absolus (`/app.js`, `/compte`), car la page est servie sous plusieurs chemins.
+
+La page (`public/app.js`), ce qu'il faut savoir avant d'y toucher :
+- Tout se redessine en HTML par gabarits ; les clics passent par un seul écouteur sur `document`, qui lit `data-act` (un `case` par action).
+- Création : le brouillon (`draft`) garde les règles par jour de la semaine dans `m` et les jours réglés à part dans la table `o` (jour → moments, `0` = exclu). `draftPayload` les range en `x` (exclus) et `o` pour le serveur. Toucher un jour de l'aperçu ouvre un `<dialog>` (`openDay`) où l'on choisit ses moments. « Journée » et les autres moments s'excluent (`toggleBit`).
+- Jours fériés : un encadré propose de les ouvrir à tous les moments du sondage s'ils tombent hors des jours choisis ou un jour où seule une partie des moments est proposée.
+- Réponse : chaque appui fait tourner un créneau, pas dispo → dispo → si besoin → pas dispo (`NEXT_VALUE`, `tapValue`). Un jour de la semaine ou un moment entier tourne en bloc (`fillWhere`). À la souris, glisser applique la valeur du créneau de départ.
+- Créneau déjà pris (agenda Google ou date choisie dans un autre sondage du compte, `conflictOf`) : hachures rouge pâle (`.pill.ans.busy`). S'y dire dispo affiche un rappel : une bulle accrochée au créneau à la souris (`showTip`), le message du bas de l'écran au doigt (`showToast`).
+- Animation d'accueil (`introHTML`, scènes dans `INTRO_SCRIPT`) : quatre scènes (créneaux, lien, dispos, date) jouées avec les vrais composants du calendrier, dans le bandeau de l'accueil des nouveaux venus, et sous « Vos sondages » tant qu'on n'a organisé aucun sondage (ni `made` ni `own` en local, ni `owner` côté compte). Elle se met en pause hors de l'écran, s'arrête après `INTRO_LOOPS` tours, reste figée si le système réduit les animations ; « Ne plus afficher » pose `introOff`.
+- Mémoire du navigateur : `on-mange-quand:v2` (sondages ouverts, prénom ; `made` = créé sur cet appareil, jamais oublié ; `introOff` = animation d'accueil masquée) et `on-mange-quand:theme`.
+
+Réglages d'un sondage (`polls.config`, validés par `validateConfig`) :
+- `t` nom, `n` précisions, `l` lieu, `ic` pictogramme (liste `ICONS` : on en ajoute à la fin, on n'en retire jamais).
+- `s`, `e`, `m`, `x`, `o`, `a` fixent la liste des créneaux. `m` : pour chaque jour de la semaine, un bit par moment, dans l'ordre `Journée, Matin, Midi, Après-midi, Soir`. `o` : jours réglés à part dans l'aperçu, en paires `[jour, moments]` qui passent avant `m` (jour ajouté, jour férié ouvert en entier, moments différents ce jour-là). `a` : ancienne forme (jours ouverts à tous les moments du sondage), encore lue mais que la page n'écrit plus. « Journée » remplace les autres moments d'un jour, dans la page comme dans `validateConfig`. `slotsKey` permet au serveur de refuser une réponse faite sur une liste de créneaux périmée ; `a` et `o` n'y figurent que s'ils ne sont pas vides.
+- `dl` date limite de réponse (jugée à l'heure de Paris, jour limite compris), `q` nombre minimum de personnes (champ masqué dans la création pour simplifier, `ASK_MINIMUM` ; encore lu et affiché pour les sondages qui en ont un), `g` invités attendus, `r` invités indispensables (parmi `g`). Les champs facultatifs vides ne sont pas enregistrés.
+- Une réponse est une chaîne avec un caractère par créneau (`0` pas dispo, `1` dispo, `2` si besoin).
+- Le classement des créneaux (indispensables, minimum, créneaux passés) et les jours fériés (France métropolitaine, Pâques calculé) ne sont connus que de la page : le serveur ne voit que les réglages.
+
+Droits (fonctions `accessOf` et `canEditAnswer` du serveur) :
+- Sondage créé en étant connecté : il a un organisateur (`owner_uid`), qui seul choisit la date, modifie, clôture, supprime ou pose un code.
+- Sondage créé sans compte (pas d'`owner_uid`) : toute personne qui a le lien répond, choisit la date, modifie, clôture, rouvre ou supprime (`acc.manage`, renvoyé à la page en `canManage`). Toute personne connectée peut en devenir l'organisateur (`POST /api/polls/:id/claim`, seulement s'il n'en a pas encore ; la page demande confirmation).
+- Une réponse donnée en étant connecté (`answers.uid`) n'est modifiable que par son auteur ou par l'organisateur ; une réponse sans compte, par tous.
+- Sondage clôturé ou date limite passée : seul l'organisateur modifie encore les réponses. Sans organisateur, personne : il faut rouvrir ou repousser la date limite.
+- La page envoie le jeton Firebase en `Authorization: Bearer`.
+
+Agenda : la comparaison avec Google Agenda se fait entièrement dans la page (Google Identity Services, accès `calendar.freebusy`, rien ne passe par le serveur) ; `GOOGLE_CLIENT_ID` est le client OAuth « Client Web 2 », réservé à l'agenda (ne pas le confondre avec le client créé par Firebase pour la connexion) ; réglages Google Cloud décrits dans le README. Le lien d'agenda (`feeds` : un jeton secret par compte) sert `/api/agenda/<jeton>.ics` sans connexion ; il liste les dates choisies des sondages où le compte organise ou a répondu dispo ou si besoin (`accountPolls`, même règle que les dates de `/api/me/polls`). Supprimer le compte efface son lien, et retire organisateur, clôture et code de ses sondages.
+
+Code d'accès (`polls.pin`, en clair pour que l'organisateur le retrouve) : seul un organisateur connecté peut le poser. Sans lui, toute route `/api/polls/:id…` répond 403 `{ pin: true }`, sauf pour l'organisateur. `POST /api/polls/:id/pin` vérifie le code et pose un cookie HttpOnly `omq_pin_<id>` (empreinte du code, limité au chemin du sondage, donc valable aussi pour le fichier `.ics`). Les essais sont comptés dans `pin_tries` (5 par 15 minutes, par sondage et empreinte d'IP) avant la comparaison, pour que des essais en parallèle ne passent pas.
+
+## Git
+
+Les commits sont signés avec le pseudo GitHub et l'adresse e-mail anonyme de GitHub (configuration locale du dépôt), jamais avec l'adresse personnelle.

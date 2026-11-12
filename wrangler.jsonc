@@ -4,7 +4,8 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   // La page (public/) est servie telle quelle ; les adresses /api/* passent par le serveur.
-  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // L'accueil « / » passe d'abord par le serveur, qui y complète l'adresse de l'image d'aperçu (servePage).
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/"] },
   "d1_databases": [
     {
       "binding": "DB",
@@ -13,5 +14,36 @@
       "migrations_dir": "migrations"
     }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Chaque nuit à 3 h (UTC) : effacement automatique, voir purge() dans src/worker.js.
+  "triggers": { "crons": ["0 3 * * *"] },
+  // Projet Firebase des comptes (vide = comptes désactivés). En local, « npm run dev » utilise l'émulateur.
+  // SITE_HOST : l'adresse publique ; les pages demandées sur workers.dev ou www y sont renvoyées (canonicalUrl).
+  "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a", "SITE_HOST": "dispos.day" },
+  // Domaine acheté chez Cloudflare : le déploiement crée lui-même les enregistrements DNS et les certificats.
+  "routes": [
+    { "pattern": "dispos.day", "custom_domain": true },
+    { "pattern": "www.dispos.day", "custom_domain": true }
+  ],
+  // Garder l'adresse workers.dev ouverte (Cloudflare la coupe dès qu'un domaine est branché) : les anciens liens y arrivent
+  // et sont renvoyés vers SITE_HOST.
+  "workers_dev": true,
+  "env": {
+    // Version de test (--env test) : sa propre adresse et sa propre base, séparées de la prod.
+    "test": {
+      "name": "on-mange-quand-test",
+      "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a", "SITE_HOST": "test.dispos.day" },
+      "routes": [{ "pattern": "test.dispos.day", "custom_domain": true }],
+      "workers_dev": true,
+      "triggers": { "crons": ["0 3 * * *"] },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "on-mange-quand-test",
+          "database_id": "4b6ab62f-9109-40ca-840b-b5d3ebe142ad",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }

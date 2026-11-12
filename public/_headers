@@ -1,0 +1,10 @@
+# En-têtes de sécurité des fichiers servis tels quels (accueil, scripts, styles, polices).
+# Les réponses fabriquées par le serveur reçoivent les mêmes (SECURITY_HEADERS dans src/worker.js) :
+# garder les deux listes identiques, npm test le vérifie.
+# La politique de contenu (CSP) est dans public/index.html, balise meta.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Strict-Transport-Security: max-age=31536000

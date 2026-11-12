@@ -2,12 +2,17 @@
   "name": "on-mange-quand",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --var FIREBASE_PROJECT_ID:demo-omq --var AUTH_EMULATOR_LOCAL_ONLY:1",
+    "auth:local": "firebase emulators:start --only auth --project demo-omq",
+    "test": "node --test tests/*.test.mjs",
+    "deploy": "node scripts/garde-fou-prod.mjs && wrangler deploy",
     "db:local": "wrangler d1 migrations apply on-mange-quand --local",
-    "db:remote": "wrangler d1 migrations apply on-mange-quand --remote"
+    "db:remote": "node scripts/garde-fou-prod.mjs && wrangler d1 migrations apply on-mange-quand --remote",
+    "db:test": "wrangler d1 migrations apply on-mange-quand-test --env test --remote",
+    "deploy:test": "wrangler deploy --env test"
   },
   "devDependencies": {
+    "firebase-tools": "15.34.1",
     "wrangler": "4.152.0"
   }
 }
