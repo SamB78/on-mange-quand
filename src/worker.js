@@ -1,6 +1,6 @@
-// Serveur de « On mange quand ? » : sert la page (public/) et une petite API de sondages.
+// Serveur de « On mange quand ? » : sert la page (public/) et l'API des sondages.
 //
-//   POST   /api/polls                     créer un sondage (organisateur = compte connecté, s'il y en a un)
+//   POST   /api/polls                     créer un sondage (organisateur = compte connecté ; sinon une clé d'organisation est rendue)
 //   GET    /api/polls/:id                 lire un sondage et ses réponses
 //   POST   /api/polls/:id/pin             donner le code d'accès { pin } ; le bon code pose un cookie pour ce sondage
 //   PUT    /api/polls/:id/answers         ajouter ou modifier une réponse { name, ans, note?, prev?, slotsKey? }
@@ -8,30 +8,31 @@
 //   PUT    /api/polls/:id/final           choisir le créneau final { i } (-1 pour annuler)
 //   PUT    /api/polls/:id                 modifier les réglages (organisateur)
 //   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (organisateur)
+//   POST   /api/polls/:id/claim           rattacher à son compte un sondage créé sans compte (clé d'organisation + connexion)
 //   DELETE /api/polls/:id                 supprimer le sondage (organisateur)
 //   GET    /api/polls/:id/evenement.ics   le créneau choisi, à ajouter dans un agenda
-//   GET    /api/me/polls                  les sondages du compte connecté (avec la date choisie, pour signaler les conflits)
+//   GET    /api/me/polls                  les sondages du compte connecté
 //   GET    /api/me/agenda                 le lien d'agenda personnel du compte ({ url } ou { url: null })
 //   POST   /api/me/agenda                 créer le lien d'agenda, ou le remplacer par un nouveau
 //   DELETE /api/me/agenda                 désactiver le lien d'agenda
 //   DELETE /api/me                        détacher le compte de ses sondages et réponses (avant sa suppression)
 //   GET    /api/agenda/:token.ics         le lien d'agenda : les repas décidés du compte (sans connexion, le jeton suffit)
 //
+// Toute autre adresse sans extension (/, /nouveau, /s/:id, /compte…) rend la page ; pour /s/:id, le titre du sondage
+// est glissé dans l'aperçu du lien (sauf s'il est protégé par un code).
+//
 // Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.
-// Sans compte, tout reste possible : le compte ne sert qu'à organiser et à protéger ses réponses.
-// Un sondage protégé par un code (choisi par l'organisateur) ne s'ouvre qu'à l'organisateur et à ceux qui ont donné le code.
+// Clé d'organisation (sondage créé sans compte) : en-tête « X-OMQ-Key », gardée par le navigateur du créateur.
 
 import { verifyIdToken } from './auth.js';
+import {
+  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS,
+  norm, weekday, parseYmd, ymd, buildSlots, slotsKey, isLate,
+} from '../public/shared.js';
 
-const MAX_DAYS = 92;
-const MAX_SLOTS = 200;
-const MAX_PEOPLE = 40;
-const MAX_NOTE = 140;
 const MAX_BODY = 20000;
-// Horaires indicatifs de chaque moment, heure de Paris (null = journée entière). Mêmes valeurs dans la page.
-const MOMENT_HOURS = [null, ['0900', '1200'], ['1200', '1430'], ['1400', '1800'], ['1930', '2300']];
-const DAY_MS = 86400000;
 const ID_RE = /^[a-z2-7]{10}$/;
+const KEY_RE = /^[a-z2-7]{24}$/;
 const FEED_FILE_RE = /^([a-z2-7]{32})\.ics$/; // adresse du lien d'agenda : jeton secret + .ics
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const PIN_RE = /^\d{4,6}$/;
@@ -61,39 +62,10 @@ function newId(length = 10) {
   return id;
 }
 
-const norm = (s) =>
-  String(s).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 const cleanText = (v, max) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
-const weekday = (d) => (new Date(d * DAY_MS).getUTCDay() + 6) % 7;
-const popcount = (r) => (r & 1) + ((r >> 1) & 1) + ((r >> 2) & 1) + ((r >> 3) & 1) + ((r >> 4) & 1);
-
-function parseYmd(s) {
-  if (!/^\d{8}$/.test(s)) return NaN;
-  const y = +s.slice(0, 4), m = +s.slice(4, 6) - 1, d = +s.slice(6, 8);
-  const t = new Date(Date.UTC(y, m, d));
-  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m || t.getUTCDate() !== d) return NaN;
-  return t.getTime() / DAY_MS;
-}
-
-// Créneaux d'un sondage, dans l'ordre : mêmes règles que la page.
-// x : jours exclus ; a : jours ajoutés hors des jours de la semaine choisis (jours fériés),
-// avec tous les moments du sondage. Les sondages d'avant les jours ajoutés n'ont pas de « a ».
-function buildSlots(cfg) {
-  const s = parseYmd(cfg.s), e = parseYmd(cfg.e);
-  const ex = new Set(cfg.x), add = new Set(cfg.a || []);
-  const all = cfg.m.reduce((u, r) => u | r, 0);
-  const slots = [];
-  for (let d = s; d <= e; d++) {
-    if (ex.has(d - s)) continue;
-    const r = cfg.m[weekday(d)] || (add.has(d - s) ? all : 0);
-    for (let t = 0; t < MOMENT_HOURS.length; t++) if (r & (1 << t)) slots.push({ d, t });
-  }
-  return slots;
-}
 const slotCount = (cfg) => buildSlots(cfg).length;
 
 /* ---------- Fichier agenda (.ics) ---------- */
-const ymdOf = (d) => new Date(d * DAY_MS).toISOString().slice(0, 10).replace(/-/g, '');
 const icsText = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
 // Une ligne de fichier agenda fait au plus 75 octets ; la suite repart à la ligne après une espace.
 function foldLine(line) {
@@ -116,13 +88,14 @@ const PARIS_TZ = [
   'END:VTIMEZONE',
 ];
 const icsStamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+const pollUrlOf = (url, id) => `${url.origin}/s/${id}`;
 // Un repas décidé. L'identifiant ne dépend que du sondage : si la date change, l'agenda déplace le même événement.
 function icsEvent(id, cfg, slot, pollUrl, stampMs) {
-  const day = ymdOf(slot.d);
+  const day = ymd(slot.d);
   const hours = MOMENT_HOURS[slot.t];
   const when = hours
     ? [`DTSTART;TZID=Europe/Paris:${day}T${hours[0]}00`, `DTEND;TZID=Europe/Paris:${day}T${hours[1]}00`]
-    : [`DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${ymdOf(slot.d + 1)}`];
+    : [`DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${ymd(slot.d + 1)}`];
   const details = (cfg.n ? cfg.n + '\n\n' : '') + 'Horaires indicatifs. Sondage : ' + pollUrl;
   return [
     'BEGIN:VEVENT',
@@ -130,6 +103,7 @@ function icsEvent(id, cfg, slot, pollUrl, stampMs) {
     `DTSTAMP:${icsStamp(stampMs)}`,
     ...when,
     `SUMMARY:${icsText(cfg.t)}`,
+    ...(cfg.l ? [`LOCATION:${icsText(cfg.l)}`] : []),
     `DESCRIPTION:${icsText(details)}`,
     `URL:${pollUrl}`,
     'END:VEVENT',
@@ -147,29 +121,75 @@ function icsCalendar(events, extra = []) {
   ];
   return lines.map(foldLine).join('\r\n') + '\r\n';
 }
-const buildIcs = (id, cfg, slot, pollUrl) => icsCalendar([icsEvent(id, cfg, slot, pollUrl, Date.now())]);
 const fileSlug = (t) => norm(t).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'repas';
 
+/* ---------- Réglages d'un sondage ---------- */
+// Champs : t nom, n précisions, l lieu, ic pictogramme, s/e période, m moments par jour de la semaine,
+// x jours exclus, a jours ajoutés (ancienne forme), o jours réglés à part, dl date limite de réponse, q nombre minimum de convives,
+// g invités attendus, r invités indispensables. Les champs facultatifs vides ne sont pas enregistrés.
 function validateConfig(b) {
-  const s = parseYmd(String(b.s ?? '')), e = parseYmd(String(b.e ?? ''));
+  const s = parseYmd(b.s), e = parseYmd(b.e);
   if (!Number.isFinite(s) || !Number.isFinite(e)) throw new HttpError(400, 'Choisissez une date de début et une date de fin.');
   if (e < s) throw new HttpError(400, 'La date de fin doit être après la date de début.');
   if (e - s >= MAX_DAYS) throw new HttpError(400, 'Période trop longue : 3 mois maximum.');
   if (!Array.isArray(b.m) || b.m.length !== 7 || !b.m.every(Number.isInteger)) throw new HttpError(400, 'Jours ou moments invalides.');
-  const m = b.m.map((r) => r & 31);
+  // « Journée » couvre tout le jour : elle remplace les autres moments.
+  const moments = (r) => (r & 1 ? 1 : r & 31);
+  const m = b.m.map(moments);
+  const allMoments = m.reduce((u, r) => u | r, 0);
   const offsets = (list, keep) => (Array.isArray(list)
     ? [...new Set(list.filter((o) => Number.isInteger(o) && o >= 0 && o <= e - s && keep(o)))].sort((p, q) => p - q)
     : []);
   const cfg = {
     t: cleanText(b.t, 80) || 'Repas entre amis',
     n: cleanText(b.n, 160),
-    s: String(b.s),
-    e: String(b.e),
+    s: ymd(s),
+    e: ymd(e),
     m,
     x: offsets(b.x, () => true),
-    // Un jour ajouté n'a de sens que si son jour de la semaine n'est pas déjà choisi.
-    a: offsets(b.a, (o) => !m[weekday(s + o)]),
+    // Un jour ajouté n'a de sens que si son jour de la semaine n'a pas déjà tous les moments du sondage.
+    a: offsets(b.a, (o) => m[weekday(s + o)] !== allMoments),
   };
+  // Jours réglés à part : [jour, moments]. Un jour exclu, sans moment ou identique à la règle n'est pas gardé.
+  if (Array.isArray(b.o)) {
+    const seen = new Set(cfg.x), own = [];
+    for (const p of b.o) {
+      if (!Array.isArray(p) || !Number.isInteger(p[0]) || !Number.isInteger(p[1])) continue;
+      const o = p[0], r = moments(p[1]);
+      if (o < 0 || o > e - s || seen.has(o) || !r || r === m[weekday(s + o)]) continue;
+      seen.add(o);
+      own.push([o, r]);
+    }
+    if (own.length) cfg.o = own.sort((p, q) => p[0] - q[0]);
+  }
+  const place = cleanText(b.l, 80);
+  if (place) cfg.l = place;
+  if (ICONS.includes(b.ic)) cfg.ic = b.ic;
+  if (b.dl != null && b.dl !== '') {
+    const dl = parseYmd(b.dl);
+    if (!Number.isFinite(dl)) throw new HttpError(400, 'Date limite de réponse invalide.');
+    if (dl > e) throw new HttpError(400, 'La date limite de réponse doit tomber avant la fin de la période.');
+    cfg.dl = ymd(dl);
+  }
+  const q = Number(b.q);
+  if (Number.isInteger(q) && q >= 2 && q <= MAX_PEOPLE) cfg.q = q;
+  if (Array.isArray(b.g)) {
+    const seen = new Set();
+    const guests = [];
+    for (const raw of b.g.slice(0, 200)) {
+      const name = cleanText(raw, 40), key = norm(name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      guests.push(name);
+      if (guests.length >= MAX_GUESTS) break;
+    }
+    if (guests.length) {
+      cfg.g = guests;
+      const wanted = new Set((Array.isArray(b.r) ? b.r : []).map((x) => norm(cleanText(x, 40))));
+      const required = guests.filter((name) => wanted.has(norm(name)));
+      if (required.length) cfg.r = required;
+    }
+  }
   const n = slotCount(cfg);
   if (!n) throw new HttpError(400, 'Aucun créneau : choisissez au moins un jour et un moment.');
   if (n > MAX_SLOTS) throw new HttpError(400, `Trop de créneaux (${n}). ${MAX_SLOTS} maximum.`);
@@ -189,10 +209,6 @@ async function readBody(request) {
 }
 
 /* ---------- Comptes et droits ---------- */
-// Les réglages qui fixent la liste des créneaux. La page les renvoie pour prouver qu'elle est à jour.
-// Les jours ajoutés n'y figurent que s'il y en a : la clé des sondages sans jour ajouté ne change pas.
-const slotsKey = (cfg) => [cfg.s, cfg.e, cfg.m.join('.'), cfg.x.join('.')].concat(cfg.a && cfg.a.length ? [cfg.a.join('.')] : []).join('|');
-
 // Compte connecté (jeton Firebase vérifié), ou null. Un jeton invalide renvoie 401 pour que la page se reconnecte.
 async function currentUser(request, env, url) {
   const match = /^Bearer\s+(\S+)$/.exec(request.headers.get('authorization') || '');
@@ -205,9 +221,44 @@ async function currentUser(request, env, url) {
 }
 
 async function loadPoll(env, id) {
-  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin FROM polls WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin, admin_key FROM polls WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   return row;
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// La base ne garde qu'une empreinte de la clé d'organisation, jamais la clé.
+const keyHash = (id, key) => sha256Hex(`on-mange-quand|cle|${id}|${key}`);
+
+// Règles :
+// - sondage avec organisateur (créé en étant connecté, ou rattaché depuis) : lui seul choisit la date, modifie,
+//   clôture ou supprime ; lui seul peut poser un code d'accès ;
+// - sondage sans organisateur : tout le monde répond et choisit la date ; le navigateur qui l'a créé garde une
+//   clé d'organisation qui permet de le modifier, le clôturer, le supprimer ou le rattacher à un compte.
+//   Les sondages d'avant les clés n'en ont pas : leurs réglages ne changent plus ;
+// - une réponse donnée en étant connecté n'est modifiable que par son auteur ou par qui gère le sondage ;
+// - sondage clôturé ou date limite passée : seul qui gère le sondage modifie encore les réponses ;
+// - sondage protégé par un code : rien n'est lisible ni modifiable sans le code, sauf pour l'organisateur.
+const isOwner = (row, user) => !!(row.owner_uid && user && row.owner_uid === user.uid);
+// acc = { user, owner, admin } : admin = organisateur connecté, ou porteur de la clé d'un sondage sans organisateur.
+async function accessOf(request, row, user) {
+  const owner = isOwner(row, user);
+  let admin = owner;
+  if (!owner && !row.owner_uid && row.admin_key) {
+    const key = request.headers.get('x-omq-key') || '';
+    admin = KEY_RE.test(key) && (await keyHash(row.id, key)) === row.admin_key;
+  }
+  return { user, owner, admin };
+}
+const isFrozen = (row, cfg) => !!row.closed || isLate(cfg);
+function canEditAnswer(row, cfg, acc, answer) {
+  if (acc.admin) return true;
+  if (isFrozen(row, cfg)) return false;
+  if (!answer || !answer.uid) return true;
+  return !!acc.user && answer.uid === acc.user.uid;
 }
 
 /* ---------- Code d'accès ---------- */
@@ -217,10 +268,6 @@ function cleanPin(v) {
   if (!pin) return null;
   if (!PIN_RE.test(pin)) throw new HttpError(400, 'Le code d’accès doit faire 4 à 6 chiffres.');
   return pin;
-}
-async function sha256Hex(text) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 // Le cookie ne contient pas le code mais une empreinte : il ne vaut plus rien si l'organisateur change le code.
 const pinToken = async (id, pin) => (await sha256Hex(`on-mange-quand|${id}|${pin}`)).slice(0, 32);
@@ -265,42 +312,37 @@ async function checkPin(env, request, row, pin) {
   await env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ? AND ip_hash = ?').bind(row.id, ipHash).run();
 }
 
-// Règles :
-// - sondage sans organisateur (créé sans compte) : tout le monde peut tout faire, sauf modifier les réglages ou supprimer ;
-// - sondage avec organisateur : lui seul choisit la date, modifie, clôture ou supprime ;
-//   une réponse donnée en étant connecté n'est modifiable que par son auteur ou l'organisateur ;
-// - sondage clôturé : plus personne ne modifie les réponses, sauf l'organisateur ;
-// - sondage protégé par un code : rien n'est lisible ni modifiable sans le code, sauf pour l'organisateur.
-const isOwner = (row, user) => !!(row.owner_uid && user && row.owner_uid === user.uid);
-function canEditAnswer(row, user, answer) {
-  if (isOwner(row, user)) return true;
-  if (row.closed) return false;
-  if (!row.owner_uid || !answer || !answer.uid) return true;
-  return !!user && answer.uid === user.uid;
-}
-
-async function pollResponse(env, row, user) {
+/* ---------- Réponses de l'API ---------- */
+async function pollResponse(env, row, acc) {
+  const cfg = JSON.parse(row.config);
   const { results } = await env.DB
     .prepare('SELECT name, ans, updated_at, note, uid FROM answers WHERE poll_id = ? ORDER BY created_at, name_key')
     .bind(row.id)
     .all();
   return {
     i: row.id,
-    ...JSON.parse(row.config),
+    ...cfg,
     f: row.final_idx ?? -1,
     owned: !!row.owner_uid,
-    isOwner: isOwner(row, user),
+    isOwner: acc.owner,
+    isAdmin: acc.admin,
     closed: !!row.closed,
+    late: isLate(cfg),
     hasPin: !!row.pin,
-    pin: isOwner(row, user) ? row.pin || '' : undefined, // le code lui-même, pour l'organisateur seulement
-    p: results.map((r) => [r.name, r.ans, r.updated_at, r.note, canEditAnswer(row, user, r), !!user && r.uid === user.uid]),
+    pin: acc.owner ? row.pin || '' : undefined, // le code lui-même, pour l'organisateur seulement
+    // Une réponse : n prénom, a dispos (un caractère par créneau), u dernière modification, note petit mot,
+    // edit : ce visiteur peut la modifier ; mine : elle est liée à son compte.
+    p: results.map((r) => ({
+      n: r.name, a: r.ans, u: r.updated_at, note: r.note,
+      edit: canEditAnswer(row, cfg, acc, r), mine: !!acc.user && r.uid === acc.user.uid,
+    })),
   };
 }
 
 // Réponse avec le sondage. Si le sondage a un code et que ce navigateur n'a pas encore le cookie
 // (l'organisateur sur un nouvel appareil, ou quelqu'un qui vient de donner le code), on le pose.
-async function pollJson(env, request, url, row, user, status = 200) {
-  const res = json(await pollResponse(env, row, user), status);
+async function pollJson(env, request, url, row, acc, status = 200, extra = {}) {
+  const res = json({ ...(await pollResponse(env, row, acc)), ...extra }, status);
   if (row.pin && !(await hasPinCookie(request, row))) res.headers.append('set-cookie', await pinCookie(url, row));
   return res;
 }
@@ -309,7 +351,7 @@ async function pollJson(env, request, url, row, user, status = 200) {
 // l'organisateur toujours ; sinon il faut qu'une réponse du compte soit « dispo » ou « si besoin » sur ce créneau.
 async function accountPolls(env, uid) {
   const { results } = await env.DB.prepare(
-    `SELECT p.id, p.config, p.final_idx, p.updated_at, p.owner_uid = ?1 AS owner,
+    `SELECT p.id, p.config, p.final_idx, p.closed, p.updated_at, p.owner_uid = ?1 AS owner,
             (SELECT COUNT(*) FROM answers a WHERE a.poll_id = p.id) AS answers,
             (SELECT GROUP_CONCAT(a.ans) FROM answers a WHERE a.poll_id = p.id AND a.uid = ?1) AS mine
        FROM polls p
@@ -321,7 +363,10 @@ async function accountPolls(env, uid) {
     const cfg = JSON.parse(r.config);
     const slot = r.final_idx == null ? null : buildSlots(cfg)[r.final_idx] || null;
     const yes = String(r.mine || '').split(',').some((ans) => ans[r.final_idx] === '1' || ans[r.final_idx] === '2');
-    return { id: r.id, cfg, owner: !!r.owner, answers: r.answers, updated: r.updated_at, slot, going: !!slot && (!!r.owner || yes) };
+    return {
+      id: r.id, cfg, owner: !!r.owner, answers: r.answers, answered: r.mine != null, closed: !!r.closed,
+      updated: r.updated_at, slot, going: !!slot && (!!r.owner || yes),
+    };
   });
 }
 
@@ -330,11 +375,12 @@ async function handleMe(request, env, url, parts) {
   if (!user) throw new HttpError(401, 'Connectez-vous pour voir cette page.');
   const method = request.method;
   if (parts.length === 3 && parts[2] === 'polls' && method === 'GET') {
-    // fd, ft : jour et moment choisis, quand le compte y participe (la page s'en sert pour signaler les conflits).
+    // dd, dt : jour et moment choisis ; going : le compte y participe (la page s'en sert pour signaler les conflits).
     return json({
       polls: (await accountPolls(env, user.uid)).map((p) => ({
-        i: p.id, t: p.cfg.t, s: p.cfg.s, e: p.cfg.e, owner: p.owner, answers: p.answers,
-        ...(p.going ? { fd: ymdOf(p.slot.d), ft: p.slot.t } : {}),
+        i: p.id, t: p.cfg.t, ic: p.cfg.ic || '', s: p.cfg.s, e: p.cfg.e, owner: p.owner, answers: p.answers,
+        answered: p.answered, closed: p.closed || isLate(p.cfg),
+        ...(p.slot ? { dd: ymd(p.slot.d), dt: p.slot.t, going: p.going } : {}),
       })),
     });
   }
@@ -358,11 +404,11 @@ async function handleMe(request, env, url, parts) {
     }
   }
   if (parts.length === 2 && method === 'DELETE') {
-    // Avant la suppression du compte : ses réponses restent mais ne lui sont plus liées,
-    // ses sondages restent accessibles à leurs participants, sans organisateur ni clôture.
+    // Avant la suppression du compte : ses réponses restent mais ne lui sont plus liées ; ses sondages restent
+    // accessibles à leurs participants, sans organisateur, sans clôture et sans code (plus personne ne pourrait le retrouver).
     await env.DB.batch([
       env.DB.prepare('UPDATE answers SET uid = NULL WHERE uid = ?').bind(user.uid),
-      env.DB.prepare('UPDATE polls SET owner_uid = NULL, closed = 0 WHERE owner_uid = ?').bind(user.uid),
+      env.DB.prepare('UPDATE polls SET owner_uid = NULL, closed = 0, pin = NULL WHERE owner_uid = ?').bind(user.uid),
       env.DB.prepare('DELETE FROM feeds WHERE uid = ?').bind(user.uid),
     ]);
     return json({ detached: true });
@@ -378,7 +424,7 @@ async function handleFeed(request, env, url, parts) {
   if (!row) throw new HttpError(404, 'Ce lien d’agenda n’existe plus. Créez-en un nouveau dans « Mon compte ».');
   const events = (await accountPolls(env, row.uid))
     .filter((p) => p.going)
-    .map((p) => icsEvent(p.id, p.cfg, p.slot, `${url.origin}/#${p.id}`, p.updated));
+    .map((p) => icsEvent(p.id, p.cfg, p.slot, pollUrlOf(url, p.id), p.updated));
   const body = icsCalendar(events, [
     'X-WR-CALNAME:Repas · On mange quand ?',
     'X-WR-TIMEZONE:Europe/Paris',
@@ -398,7 +444,6 @@ async function handleApi(request, env, url) {
   if (parts[1] === 'agenda') return handleFeed(request, env, url, parts);
   if (parts[1] !== 'polls' || parts.length > 4) throw new HttpError(404, 'Adresse inconnue.');
   const user = await currentUser(request, env, url);
-  const reply = (r, status) => pollJson(env, request, url, r, user, status);
 
   if (parts.length === 2) {
     if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
@@ -409,47 +454,58 @@ async function handleApi(request, env, url) {
     if (pin && !user) throw new HttpError(400, 'Connectez-vous pour protéger le sondage par un code : vous pourrez toujours le retrouver.');
     const id = newId();
     const now = Date.now();
-    const row = { id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0, pin };
-    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, pin, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
-      .bind(id, row.config, row.owner_uid, pin, now, now)
+    // Sans compte, le navigateur du créateur reçoit une clé d'organisation, une seule fois.
+    const key = user ? null : newId(24);
+    const row = {
+      id, config: JSON.stringify(cfg), final_idx: null, owner_uid: user ? user.uid : null, closed: 0, pin,
+      admin_key: key ? await keyHash(id, key) : null,
+    };
+    await env.DB.prepare('INSERT INTO polls (id, config, final_idx, owner_uid, pin, admin_key, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?)')
+      .bind(id, row.config, row.owner_uid, pin, row.admin_key, now, now)
       .run();
-    return reply(row, 201);
+    return pollJson(env, request, url, row, { user, owner: !!user, admin: true }, 201, key ? { key } : {});
   }
 
   const id = parts[2];
   if (!ID_RE.test(id)) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   const row = await loadPoll(env, id);
   const cfg = JSON.parse(row.config);
+  const acc = await accessOf(request, row, user);
   const action = parts[3] || '';
   const now = Date.now();
+  const reply = (r, status) => pollJson(env, request, url, r, acc, status);
 
   if (action === 'pin') {
     if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
-    if (row.pin && !isOwner(row, user)) await checkPin(env, request, row, String((await readBody(request)).pin ?? '').trim());
+    if (row.pin && !acc.owner) await checkPin(env, request, row, String((await readBody(request)).pin ?? '').trim());
     return reply(row);
   }
-  if (row.pin && !isOwner(row, user) && !(await hasPinCookie(request, row))) {
+  if (row.pin && !acc.owner && !(await hasPinCookie(request, row))) {
     throw new HttpError(403, 'Ce sondage est protégé par un code.', { pin: true });
   }
 
   const touch = env.DB.prepare('UPDATE polls SET updated_at = ? WHERE id = ?').bind(now, id);
-  const ownerOnly = (message) => { if (!isOwner(row, user)) throw new HttpError(403, message); };
-  const ownerIfOwned = (message) => { if (row.owner_uid) ownerOnly(message); };
-  const notClosed = () => {
-    if (row.closed && !isOwner(row, user)) throw new HttpError(403, 'Le sondage est clôturé : les réponses ne peuvent plus changer.');
+  const adminOnly = (what) => {
+    if (acc.admin) return;
+    throw new HttpError(403, row.owner_uid
+      ? `Seul l’organisateur peut ${what}.`
+      : `Ce sondage a été créé sans compte : on ne peut ${what} que depuis l’appareil qui l’a créé.`);
+  };
+  const notFrozen = () => {
+    if (acc.admin) return;
+    if (row.closed) throw new HttpError(403, 'Le sondage est clôturé : les réponses ne peuvent plus changer.');
+    if (isLate(cfg)) throw new HttpError(403, 'La date limite de réponse est passée : les réponses ne peuvent plus changer.');
   };
 
   if (!action) {
     if (method === 'GET') return reply(row);
 
     if (method === 'PUT') {
-      ownerOnly(row.owner_uid
-        ? 'Seul l’organisateur peut modifier le sondage.'
-        : 'Ce sondage a été créé sans compte : ses réglages ne peuvent plus être modifiés.');
+      adminOnly('modifier le sondage');
       const body = await readBody(request);
       const next = validateConfig(body);
-      // Sans champ « pin » (page d'avant les codes), le code ne change pas ; vide, il est retiré.
-      const pin = 'pin' in body ? cleanPin(body.pin) : row.pin;
+      // Le code reste réservé à l'organisateur connecté. Sans champ « pin », il ne change pas ; vide, il est retiré.
+      const pin = acc.owner && 'pin' in body ? cleanPin(body.pin) : row.pin;
       // Les dispos déjà données suivent leur créneau (même jour, même moment) ; celles des créneaux retirés sont perdues.
       const oldSlots = buildSlots(cfg), newSlots = buildSlots(next);
       const slotKey = (sl) => sl.d * 8 + sl.t;
@@ -468,9 +524,7 @@ async function handleApi(request, env, url) {
     }
 
     if (method === 'DELETE') {
-      ownerOnly(row.owner_uid
-        ? 'Seul l’organisateur peut supprimer le sondage.'
-        : 'Ce sondage a été créé sans compte : il ne peut pas être supprimé.');
+      adminOnly('supprimer le sondage');
       await env.DB.batch([
         env.DB.prepare('DELETE FROM answers WHERE poll_id = ?').bind(id),
         env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ?').bind(id),
@@ -482,7 +536,7 @@ async function handleApi(request, env, url) {
   }
 
   if (action === 'answers' && method === 'PUT') {
-    notClosed();
+    notFrozen();
     const body = await readBody(request);
     if (body.slotsKey != null && body.slotsKey !== slotsKey(cfg)) {
       throw new HttpError(409, 'L’organisateur vient de modifier les dates du sondage. Rechargez la page, puis cochez à nouveau vos dispos.');
@@ -499,10 +553,10 @@ async function handleApi(request, env, url) {
     const find = (k) => env.DB.prepare('SELECT uid FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, k).first();
     const target = await find(key);
     const previous = renamed ? await find(prevKey) : null;
-    if (target && !canEditAnswer(row, user, target)) {
+    if (target && !canEditAnswer(row, cfg, acc, target)) {
       throw new HttpError(403, `${name} a répondu avec son compte : seul ${name} ou l’organisateur peut modifier cette réponse. Ajoutez une initiale pour vous distinguer.`);
     }
-    if (previous && !canEditAnswer(row, user, previous)) {
+    if (previous && !canEditAnswer(row, cfg, acc, previous)) {
       throw new HttpError(403, 'Seule la personne qui a donné cette réponse, ou l’organisateur, peut la modifier.');
     }
     if (!target) {
@@ -526,11 +580,11 @@ async function handleApi(request, env, url) {
   }
 
   if (action === 'answers' && method === 'DELETE') {
-    notClosed();
+    notFrozen();
     const key = norm(cleanText((await readBody(request)).name, 40));
     if (!key) throw new HttpError(400, 'Réponse à supprimer introuvable.');
     const target = await env.DB.prepare('SELECT uid FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key).first();
-    if (target && !canEditAnswer(row, user, target)) {
+    if (target && !canEditAnswer(row, cfg, acc, target)) {
       throw new HttpError(403, 'Seule la personne qui a donné cette réponse, ou l’organisateur, peut la supprimer.');
     }
     await env.DB.batch([env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key), touch]);
@@ -538,7 +592,8 @@ async function handleApi(request, env, url) {
   }
 
   if (action === 'final' && method === 'PUT') {
-    ownerIfOwned('Seul l’organisateur peut choisir la date finale.');
+    // Avec un organisateur, lui seul décide ; sans organisateur, tout le monde peut choisir la date.
+    if (row.owner_uid && !acc.owner) throw new HttpError(403, 'Seul l’organisateur peut choisir la date finale.');
     const i = Number((await readBody(request)).i);
     const finalIdx = Number.isInteger(i) && i >= 0 && i < slotCount(cfg) ? i : null;
     await env.DB.prepare('UPDATE polls SET final_idx = ?, updated_at = ? WHERE id = ?').bind(finalIdx, now, id).run();
@@ -546,16 +601,25 @@ async function handleApi(request, env, url) {
   }
 
   if (action === 'closed' && method === 'PUT') {
-    ownerOnly('Seul l’organisateur peut clôturer le sondage.');
+    adminOnly('clôturer le sondage');
     const closed = (await readBody(request)).closed ? 1 : 0;
     await env.DB.prepare('UPDATE polls SET closed = ?, updated_at = ? WHERE id = ?').bind(closed, now, id).run();
     return reply({ ...row, closed });
   }
 
+  if (action === 'claim' && method === 'POST') {
+    // Le créateur d'un sondage sans compte se connecte et en devient l'organisateur : la clé ne sert plus.
+    if (!user) throw new HttpError(401, 'Connectez-vous pour rattacher ce sondage à votre compte.');
+    if (row.owner_uid) throw new HttpError(409, 'Ce sondage a déjà un organisateur.');
+    if (!acc.admin) throw new HttpError(403, 'Ce sondage ne peut être rattaché que depuis l’appareil qui l’a créé.');
+    await env.DB.prepare('UPDATE polls SET owner_uid = ?, admin_key = NULL, updated_at = ? WHERE id = ? AND owner_uid IS NULL').bind(user.uid, now, id).run();
+    return pollJson(env, request, url, { ...row, owner_uid: user.uid, admin_key: null }, { user, owner: true, admin: true });
+  }
+
   if (action === 'evenement.ics' && method === 'GET') {
     const slot = row.final_idx == null ? null : buildSlots(cfg)[row.final_idx];
     if (!slot) throw new HttpError(404, 'Aucun créneau n’a encore été choisi pour ce repas.');
-    return new Response(buildIcs(id, cfg, slot, `${url.origin}/#${id}`), {
+    return new Response(icsCalendar([icsEvent(id, cfg, slot, pollUrlOf(url, id), now)]), {
       headers: {
         'content-type': 'text/calendar; charset=utf-8',
         'content-disposition': `attachment; filename="${fileSlug(cfg.t)}.ics"`,
@@ -565,6 +629,35 @@ async function handleApi(request, env, url) {
   }
 
   throw new HttpError(404, 'Adresse inconnue.');
+}
+
+/* ---------- La page ---------- */
+// Toutes les adresses de l'app rendent la même page ; elle lit l'adresse et affiche la bonne vue.
+// Pour un sondage, on glisse son nom dans l'aperçu du lien (WhatsApp, iMessage…), sauf s'il est protégé par un code.
+async function servePage(request, env, url) {
+  const res = await env.ASSETS.fetch(new Request(new URL('/', url), { method: 'GET' }));
+  const match = /^\/s\/([a-z2-7]{10})\/?$/.exec(url.pathname);
+  if (!match || res.status !== 200) return res;
+  let title = '';
+  try {
+    const row = await env.DB.prepare('SELECT config, pin FROM polls WHERE id = ?').bind(match[1]).first();
+    if (row && !row.pin) title = JSON.parse(row.config).t || '';
+  } catch (e) {
+    // base indisponible : la page s'affiche quand même, avec son aperçu habituel
+  }
+  let rewriter = new HTMLRewriter()
+    // Un sondage ne regarde que son groupe : on demande aux moteurs de recherche de l'ignorer.
+    .on('head', { element(el) { el.append('<meta name="robots" content="noindex">', { html: true }); } });
+  if (title) {
+    rewriter = rewriter
+      .on('title', { element(el) { el.setInnerContent(`${title} · On mange quand ?`); } })
+      .on('meta[property="og:title"]', { element(el) { el.setAttribute('content', `${title} : on mange quand ?`); } })
+      .on('meta[property="og:description"]', { element(el) { el.setAttribute('content', 'Ajoute tes dispos en deux clics, sans compte.'); } });
+  }
+  const out = new Response(rewriter.transform(res).body, res);
+  out.headers.delete('etag');
+  out.headers.set('cache-control', 'no-cache');
+  return out;
 }
 
 export default {
@@ -579,6 +672,8 @@ export default {
         return json({ error: 'Le serveur a rencontré un problème. Réessayez dans un instant.' }, 500);
       }
     }
+    const last = url.pathname.split('/').pop();
+    if ((request.method === 'GET' || request.method === 'HEAD') && !last.includes('.')) return servePage(request, env, url);
     return env.ASSETS.fetch(request);
   },
 };
