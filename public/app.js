@@ -5,7 +5,7 @@ import {
   MOMENTS, MOMENT_SHORT, MOMENT_HOURS, ICONS, norm, weekday, parseYmd, ymd, buildSlots, slotsKey,
 } from '/shared.js';
 
-// Ancien nom du projet, gardé : le navigateur y range les clés d'organisation déjà données.
+// Ancien nom du projet, gardé : le navigateur y range déjà les sondages ouverts et le prénom.
 const STORE_KEY = 'on-mange-quand:v2';
 const THEME_KEY = 'on-mange-quand:theme';
 const REFRESH_MS = 15000;
@@ -101,7 +101,7 @@ function showToast(msg, isError) {
   toastTimer = setTimeout(() => { toastEl.hidden = true; }, isError ? 5000 : 3000);
 }
 
-/* ---------- Mémoire locale : vos sondages, votre prénom et vos clés d'organisation, sur cet appareil ---------- */
+/* ---------- Mémoire locale : vos sondages et votre prénom, sur cet appareil ---------- */
 function loadStore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
@@ -120,13 +120,13 @@ function remember(st, me) {
   const prev = s.polls[st.i] || {};
   const chosen = st.f >= 0 ? buildSlots(st)[st.f] : null;
   s.polls[st.i] = Object.assign({}, prev, {
-    t: st.t, ic: st.ic || '', s: st.s, e: st.e, n: st.p.length, seen: Date.now(), own: !!st.isAdmin,
+    t: st.t, ic: st.ic || '', s: st.s, e: st.e, n: st.p.length, seen: Date.now(), own: !!st.isOwner,
     closed: !!(st.closed || st.late), dd: chosen ? ymd(chosen.d) : '', dt: chosen ? chosen.t : 0,
     me: me !== undefined ? me : (prev.me || null),
   });
-  // On garde les 50 derniers sondages ouverts ; ceux dont on détient la clé d'organisation ne sont jamais oubliés.
+  // On garde les 50 derniers sondages ouverts ; ceux créés sur cet appareil ne sont jamais oubliés.
   Object.keys(s.polls)
-    .filter((id) => !s.polls[id].key)
+    .filter((id) => !s.polls[id].made)
     .sort((a, b) => (s.polls[b].seen || 0) - (s.polls[a].seen || 0))
     .slice(50)
     .forEach((id) => { delete s.polls[id]; });
@@ -181,10 +181,6 @@ async function api(method, path, body, retry = true) {
   }
   if (token) headers.authorization = 'Bearer ' + token;
   if (body) headers['content-type'] = 'application/json';
-  // Clé d'organisation d'un sondage créé sans compte sur cet appareil.
-  const forPoll = /^\/polls\/([a-z2-7]{10})/.exec(path);
-  const key = forPoll && (loadStore().polls[forPoll[1]] || {}).key;
-  if (key) headers['x-omq-key'] = key;
   let res;
   try {
     res = await fetch('/api' + path, { method, headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
@@ -295,7 +291,7 @@ let account = { mode: 'in', delAsk: false };
 let wiz = { step: 1, editing: false };
 function freshUi(keep) {
   return {
-    open: false, name: '', note: '', vals: [], editing: null, delAsk: false, savedName: '', pollDelAsk: false,
+    open: false, name: '', note: '', vals: [], editing: null, delAsk: false, savedName: '', pollDelAsk: false, claimAsk: false,
     pick: null,    // créneau détaillé dans les résultats
     focus: null,   // personne dont on regarde les dispos dans les résultats
     created: !!(keep && keep.created),
@@ -321,7 +317,7 @@ let createDraft = null; // brouillon de création mis de côté pendant la modif
 const slotsKeyOf = (st) => slotsKey(st);
 // Sans organisateur (sondage créé sans compte, exemple), tout le monde peut choisir la date.
 const canDecide = () => poll.example || !poll.st.owned || poll.st.isOwner;
-const isFrozen = () => (poll.st.closed || poll.st.late) && !poll.st.isAdmin;
+const isFrozen = () => (poll.st.closed || poll.st.late) && !poll.st.isOwner;
 function getMe() {
   if (!poll || poll.example) return null;
   const p = loadStore().polls[poll.st.i];
@@ -437,7 +433,7 @@ function showHome(msg) {
           <p class="muted">Pour aller vite.</p>
           <ul>
             <li>${icon('check', 16)}Créer un sondage et y répondre</li>
-            <li>${icon('check', 16)}Le gérer depuis l’appareil qui l’a créé</li>
+            <li>${icon('check', 16)}Toute personne qui a le lien peut le gérer</li>
             <li>${icon('check', 16)}Tout le monde peut choisir la date</li>
           </ul>
           <a class="btn" href="/nouveau">Créer un sondage</a>
@@ -569,7 +565,7 @@ function stepHTML() {
     </div>` : ''}
     ${wiz.editing ? '' : auth.user
       ? `<p class="notice">${icon('star', 18)}<span>Vous serez l’<b>organisateur</b>&nbsp;: vous seul pourrez choisir la date, modifier, clôturer ou supprimer ce sondage, depuis tous vos appareils.</span></p>`
-      : `<p class="notice">${icon('lock', 18)}<span>Sans compte, vous gérez ce sondage depuis cet appareil seulement, et tout le monde peut choisir la date.${auth.enabled
+      : `<p class="notice">${icon('lock', 18)}<span>Sans compte, toute personne qui a le lien pourra modifier, clôturer ou supprimer ce sondage, et choisir la date.${auth.enabled
         ? ' <a href="/compte">Connectez-vous</a> pour en être le seul organisateur et le protéger par un code.' : ''}</span></p>`}`;
 }
 
@@ -902,8 +898,7 @@ async function createPoll(btn) {
   try {
     const st = await api('POST', '/polls', draftPayload());
     busy = false;
-    // Sans compte : la clé d'organisation reste dans ce navigateur, elle n'est donnée qu'une fois.
-    if (st.key) { storePatch(st.i, { key: st.key }); delete st.key; }
+    storePatch(st.i, { made: true }); // créé ici : gardé dans la liste de l'accueil
     remember(st);
     draft = newDraft();
     wiz = { step: 1, editing: false };
@@ -1052,7 +1047,7 @@ function renderPoll() {
   document.title = (st.t || DEFAULT_TITLE) + ' · ' + SITE_NAME;
   renderTopnav();
   const badges = [];
-  if (st.isAdmin) badges.push(`<span class="tag accent">${icon('star', 14)}Vous organisez</span>`);
+  if (st.isOwner) badges.push(`<span class="tag accent">${icon('star', 14)}Vous organisez</span>`);
   if (st.hasPin) badges.push(`<span class="tag">${icon('lock', 14)}Protégé par un code</span>`);
   if (st.closed) badges.push('<span class="tag">Clôturé</span>');
   app.innerHTML = `<div class="page poll">
@@ -1066,7 +1061,9 @@ function renderPoll() {
         <ul class="facts" id="facts">${factsHTML(c)}</ul>
       </div>
     </header>
-    ${st.closed || st.late ? `<div class="banner calm"><p>${st.closed ? 'Sondage clôturé' : 'La date limite est passée'}&nbsp;: les réponses ne peuvent plus changer${st.isAdmin ? ', sauf par vous' : ''}.</p></div>` : ''}
+    ${st.closed || st.late ? `<div class="banner calm"><p>${st.closed ? 'Sondage clôturé' : 'La date limite est passée'}&nbsp;: les réponses ne peuvent plus changer${st.isOwner ? ', sauf par vous' : ''}.${!st.owned && !poll.example
+      ? (st.closed ? ' Toute personne qui a le lien peut le rouvrir, plus bas.' : ' Toute personne qui a le lien peut repousser la date limite avec «&nbsp;Modifier&nbsp;», plus bas.')
+      : ''}</p></div>` : ''}
     <div class="p-grid">
       <div class="p-main">
         ${!poll.example && ui.created ? shareHTML() : ''}
@@ -1570,17 +1567,19 @@ function shareHTML() {
 
 function orgHTML() {
   const st = poll.st;
-  if (poll.example || !st.isAdmin) return '';
+  if (poll.example || !st.canManage) return '';
   const intro = st.isOwner
     ? 'Vous seul choisissez la date, modifiez, clôturez ou supprimez ce sondage, depuis tous vos appareils.'
-    : 'Vous avez créé ce sondage sur cet appareil&nbsp;: lui seul peut le modifier, le clôturer ou le supprimer.';
+    : 'Créé sans compte&nbsp;: toute personne qui a le lien peut le modifier, le clôturer ou le supprimer, et choisir la date.';
   const secure = st.isOwner ? `<p class="hint">${st.pin
       ? `Protégé par le code <b class="code">${esc(st.pin)}</b>.`
       : 'Pas de code d’accès&nbsp;: le lien suffit pour ouvrir le sondage.'} Pour le changer&nbsp;: «&nbsp;Modifier&nbsp;», étape 3.</p>`
     : !auth.enabled ? ''
       : auth.user
-        ? `<div class="secure"><p><b>Sécurisez-le avec votre compte.</b> Vous serez le seul à choisir la date, vous le retrouverez partout et pourrez le protéger par un code.</p><button type="button" class="btn sm primary" data-act="claim">Rattacher à mon compte</button></div>`
-        : `<div class="secure"><p><b>Envie de garder la main&nbsp;?</b> Connectez-vous pour rattacher ce sondage à votre compte&nbsp;: date choisie par vous seul, code d’accès, accès depuis tous vos appareils.</p><a class="btn sm" href="/compte">Se connecter</a></div>`;
+        ? `<div class="secure"><p><b>Gardez la main avec votre compte.</b> Vous serez le seul à le gérer et à choisir la date, vous le retrouverez partout et pourrez le protéger par un code.</p>${ui.claimAsk
+            ? '<div class="confirm"><span>Vous deviendrez le seul organisateur&nbsp;: les autres ne pourront plus le modifier, le clôturer, le supprimer ni choisir la date.</span><button type="button" class="btn sm primary" data-act="claim">Rattacher</button><button type="button" class="btn sm" data-act="claim-cancel">Annuler</button></div>'
+            : '<button type="button" class="btn sm primary" data-act="claim-ask">Rattacher à mon compte</button>'}</div>`
+        : `<div class="secure"><p><b>Envie de garder la main&nbsp;?</b> Connectez-vous pour rattacher ce sondage à votre compte&nbsp;: vous serez le seul à le gérer et à choisir la date, avec un code d’accès si vous voulez.</p><a class="btn sm" href="/compte">Se connecter</a></div>`;
   return `<section class="card org" id="org" aria-labelledby="o-h">
     <h2 id="o-h">Organisation</h2>
     <p class="muted">${intro}</p>
@@ -1728,9 +1727,7 @@ function claimPoll(btn) {
   const id = poll.st.i;
   return runAction(btn, 'Rattachement…', async () => {
     const st = await api('POST', '/polls/' + id + '/claim');
-    // La clé d'organisation ne sert plus : le compte a pris le relais.
-    const s = loadStore();
-    if (s.polls[id]) { delete s.polls[id].key; saveStore(s); }
+    ui.claimAsk = false;
     poll.st = st;
     remember(st);
     renderPoll();
@@ -1824,8 +1821,8 @@ function repaintResults() {
 }
 
 /* ---------- Actualisation automatique ---------- */
-const signature = (st) => JSON.stringify([st.p, st.f, st.owned, st.isOwner, st.isAdmin, st.closed, st.late, st.t, st.n, st.l, st.ic, st.dl, st.q, st.g, st.r, slotsKeyOf(st), st.hasPin, st.pin]);
-const headSignature = (st) => JSON.stringify([st.t, st.n, st.l, st.ic, st.isOwner, st.isAdmin, st.owned, st.closed, st.late, st.hasPin, st.pin]);
+const signature = (st) => JSON.stringify([st.p, st.f, st.owned, st.isOwner, st.canManage, st.closed, st.late, st.t, st.n, st.l, st.ic, st.dl, st.q, st.g, st.r, slotsKeyOf(st), st.hasPin, st.pin]);
+const headSignature = (st) => JSON.stringify([st.t, st.n, st.l, st.ic, st.isOwner, st.canManage, st.owned, st.closed, st.late, st.hasPin, st.pin]);
 async function refresh(force) {
   if (view !== 'poll' || !poll || poll.example || busy || (!force && document.visibilityState !== 'visible')) return;
   const id = poll.st.i;
@@ -2048,7 +2045,7 @@ function showPrivacy() {
       <p class="muted">Dernière mise à jour&nbsp;: novembre 2026</p>
       <h2>Sans compte</h2>
       <p>Tout fonctionne sans compte. Un sondage enregistre seulement ce que vous y écrivez&nbsp;: nom du sondage, lieu, prénoms attendus, puis prénom, dispos et petit mot de chaque réponse. Ces informations sont visibles par toute personne qui a le lien du sondage.</p>
-      <p>Votre navigateur garde aussi, sur votre appareil uniquement, la liste des sondages ouverts, le prénom utilisé, le thème choisi et, pour les sondages que vous avez créés sans compte, une clé d’organisation qui vous permet de les gérer depuis cet appareil. Notre serveur n’en conserve qu’une empreinte.</p>
+      <p>Votre navigateur garde aussi, sur votre appareil uniquement, la liste des sondages ouverts, le prénom utilisé et le thème choisi.</p>
       <h2>Avec un compte</h2>
       <ul>
         <li>La connexion est gérée par Firebase Authentication (Google). Firebase conserve votre adresse e-mail, votre nom et, si vous en avez un, votre mot de passe sous forme chiffrée. Nous ne voyons jamais votre mot de passe.</li>
@@ -2078,7 +2075,7 @@ function exampleState() {
     i: 'exemple', t: 'Raclette chez Léa', ic: '🧀', l: 'Chez Léa, Lyon 7e', n: 'Chacun apporte un fromage',
     s: ymd(s), e: ymd(e), m: [0, 0, 0, 0, SOIR, MIDI | SOIR, MIDI], x: [], a: [],
     g: ['Léa', 'Karim', 'Sophie', 'Hugo', 'Inès', 'Tom'], r: ['Léa'], q: 4,
-    p: [], f: -1, owned: false, isOwner: false, isAdmin: false, closed: false, late: false, hasPin: false,
+    p: [], f: -1, owned: false, isOwner: false, canManage: false, closed: false, late: false, hasPin: false,
   };
   const slots = buildSlots(st);
   const names = ['Léa', 'Karim', 'Sophie', 'Hugo', 'Inès'];
@@ -2228,6 +2225,12 @@ document.addEventListener('click', (ev) => {
     case 'unfinal': setFinal(el, -1); break;
     case 'copy': copyLink(el); break;
     case 'share': nativeShare(); break;
+    case 'claim-ask': {
+      ui.claimAsk = true; renderPoll();
+      const n = $('[data-act="claim"]'); if (n) n.focus();
+      break;
+    }
+    case 'claim-cancel': ui.claimAsk = false; renderPoll(); break;
     case 'claim': claimPoll(el); break;
     case 'toggle-closed': toggleClosed(el); break;
     case 'poll-del-ask': {
