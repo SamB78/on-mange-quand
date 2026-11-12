@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- Icônes de l'appli (écran d'accueil). Régénérer : sh scripts/images/fabriquer.sh
+     ?t=<taille>  ?plein=1 : carré plein sans coins arrondis (iPhone et « maskable » : le système découpe lui-même).
+     Le motif (anneau + point) occupe 62 % du côté : il reste dans la zone sûre des icônes « maskable » (80 %). -->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; }
+  html, body { background: transparent; overflow: hidden; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const t = +q.get('t') || 512;
+  const rx = q.get('plein') ? 0 : 9;
+  document.body.innerHTML = `<svg viewBox="0 0 32 32" width="${t}" height="${t}"><rect width="32" height="32" rx="${rx}" fill="#DC3B1F"/><circle cx="16" cy="16" r="8.5" fill="none" stroke="#fff" stroke-width="3"/><circle cx="16" cy="16" r="2.6" fill="#fff"/></svg>`;
+</script>
+</body>
+</html>
