@@ -51,6 +51,8 @@ const ICON = {
   trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   star: '<path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/>',
   flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7"/>',
+  play: '<path d="M7 4.5v15l12-7.5z"/>',
+  pause: '<path d="M8 5v14M16 5v14"/>',
   rules: '<path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2" fill="var(--surface)"/><circle cx="16" cy="12" r="2" fill="var(--surface)"/><circle cx="10" cy="18" r="2" fill="var(--surface)"/>',
 };
 const icon = (name, size = 18) =>
@@ -381,6 +383,8 @@ function showHome(msg) {
   renderTopnav();
   const mine = localPolls();
   const alert = msg ? `<p class="alert" role="alert">${esc(msg)}</p>` : '';
+  // Pas encore organisé de sondage (ni créé sur cet appareil, ni organisé avec le compte) : l'animation reste proposée.
+  const showIntro = !mine.some((p) => p.made || p.own) && !loadStore().introOff;
   if (mine.length || auth.user) {
     app.innerHTML = `<div class="page narrow">
       ${alert}
@@ -390,6 +394,14 @@ function showHome(msg) {
         <a class="btn primary" href="/nouveau">${icon('plus')}Nouveau sondage</a>
       </header>
       <section id="home-polls" aria-label="Vos sondages">${pollListHTML(mine)}</section>
+      ${showIntro ? `<section class="intro-box" id="home-intro" aria-labelledby="intro-h">
+        <div class="intro-box-text">
+          <h2 id="intro-h">Et si vous organisiez le prochain&nbsp;?</h2>
+          <p class="muted">Proposez des créneaux, envoyez le lien au groupe&nbsp;: la date où tout le monde peut venir ressort toute seule.</p>
+          <div class="actions"><a class="btn primary" href="/nouveau">${icon('plus')}Créer un sondage</a><button type="button" class="linkbtn" data-act="intro-off">Ne plus afficher</button></div>
+        </div>
+        ${introHTML()}
+      </section>` : ''}
       ${!auth.user && auth.enabled ? `<aside class="nudge">
         ${icon('lock', 22)}
         <p><b>Retrouvez-les partout.</b> Avec un compte gratuit, vos sondages vous suivent sur tous vos appareils, vous seul en décidez la date, et vous pouvez les protéger par un code.</p>
@@ -397,6 +409,7 @@ function showHome(msg) {
       </aside>` : ''}
     </div>`;
     if (auth.user) loadHomePolls(mine);
+    startIntro();
     return;
   }
   app.innerHTML = `<div class="page landing">
@@ -411,7 +424,7 @@ function showHome(msg) {
           <a class="btn lg" href="/exemple">Voir un exemple</a>
         </div>
       </div>
-      ${demoHTML()}
+      ${introHTML()}
     </section>
     <section class="how" aria-labelledby="how-h">
       <h2 id="how-h">Trois étapes, pas une de plus</h2>
@@ -457,21 +470,239 @@ function showHome(msg) {
       </div>
     </section>
   </div>`;
+  startIntro();
 }
 
-// Aperçu de la page d'accueil : le sondage d'exemple, rendu avec les vrais composants.
-function demoHTML() {
-  const st = exampleState();
-  const slots = buildSlots(st);
-  const stats = computeStats(st, slots);
-  const best = rank(stats)[0];
-  const multi = usedMoments(slots).length > 1;
-  const n = st.p.length;
-  return `<div class="demo" aria-hidden="true">
-    <div class="demo-head"><span class="demo-ic">${st.ic}</span><div><b>${esc(st.t)}</b><small>${plural(n, 'réponse')} · ${esc(st.l)}</small></div></div>
-    <div class="demo-best"><span class="v-label">En tête</span><b>${esc(slotLong(slots[best.i]))}</b><span>${best.tot} sur ${n} disponibles</span></div>
-    ${slotCal(slots, (i) => heatPill(slots[i], stats[i], n, { multi, inert: true, best: sameRank(stats[i], best) }))}
+/* ---------- Animation d'accueil : comment ça marche, en quatre scènes ---------- */
+// Montrée à qui n'a encore jamais créé de sondage : sur l'accueil, puis sous la liste « Vos sondages » (masquable).
+// Une scène = des étapes [délai en ms, fonction] qui posent des classes sur le décor ; les transitions CSS font le reste.
+// Chaque fonction reçoit `now` : vrai pour se placer directement à la fin (saut d'étape, pause, animations réduites).
+// Elle se met en pause hors de l'écran, s'arrête après INTRO_LOOPS tours, et reste figée si le système demande moins d'animations.
+const INTRO_STEPS = ['Vous proposez des créneaux', 'Vous envoyez le lien au groupe', 'Chacun coche ses dispos', 'La meilleure date ressort'];
+const INTRO_DUR = [4800, 4600, 5400, 5200];
+const INTRO_LOOPS = 2;
+const INTRO_TITLE = 'Raclette chez Léa';
+// Réponses aux dix soirs proposés (deux semaines, du lundi au vendredi) : le jeudi de la première semaine fait l'unanimité.
+const INTRO_PEOPLE = [['Léa', '1101101101'], ['Karim', '0111010101'], ['Sophie', '1001101010'], ['Hugo', '0101010110']];
+const INTRO_BEST = 3;
+const introMonday = () => todayDay + 7 - weekday(todayDay); // le lundi qui vient
+const BRAND_MARK = '<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)"/><circle cx="16" cy="16" r="8.5" fill="none" stroke="var(--accent-ink)" stroke-width="3"/><circle cx="16" cy="16" r="2.6" fill="var(--accent-ink)"/></svg>';
+
+function introStageHTML() {
+  const mon = introMonday();
+  const cells = Array.from({ length: 14 }, (_, c) => {
+    const w = c % 7, num = `<span class="day-n">${dateOf(mon + c)}</span>`;
+    if (w > 4) return `<span class="day off">${num}</span>`;
+    const k = c < 7 ? w : w + 5;
+    return `<div class="day" style="--k:${k}">${num}<span class="pill heat h0" data-k="${k}"><small class="intro-m">soir</small><b>0</b></span></div>`;
+  }).join('');
+  return `<div class="intro-head"><span class="intro-ic">🧀</span><div class="intro-name"><b class="intro-title"></b><small class="intro-sub">Nouveau sondage</small></div></div>
+    <div class="intro-tools" data-s="formules">
+      <div class="intro-formules"><span class="chip sm">Tous les soirs</span><span class="chip sm intro-pick">En semaine</span><span class="chip sm">Week-end</span></div>
+      <div class="intro-people">${INTRO_PEOPLE.map(([n]) => avatarHTML(n, ' intro-av')).join('')}<span class="intro-count"></span></div>
+    </div>
+    <div class="cal intro-cal" style="--cols:7">${WD.map((w) => `<span class="cal-wd">${w}</span>`).join('')}${cells}</div>
+    <div class="intro-foot" data-s="cta">
+      <span class="btn primary intro-cta">Créer le sondage${icon('right', 16)}</span>
+      <span class="intro-live"><i></i>Les réponses s’affichent en direct</span>
+      <span class="intro-best"><span><small class="v-label"><span class="if-off">En tête · ${INTRO_PEOPLE.length} sur ${INTRO_PEOPLE.length}</span><span class="if-on">C’est calé&nbsp;! 🎉</span></small><b>${esc(slotLong({ d: mon + INTRO_BEST, t: 4 }))}</b></span><span class="intro-choose"><span class="if-off">Choisir</span><span class="if-on">${icon('check', 16)}</span></span></span>
+    </div>
+    <div class="intro-sheet">
+      <b class="intro-sheet-h">C’est prêt. Envoyez le lien au groupe.</b>
+      <div class="intro-link"><span class="intro-url">${esc(location.host)}/s/k7m2pq4xna</span><span class="btn sm primary intro-copy">${icon('copy', 15)}<span class="if-off">Copier</span><span class="if-on">Copié</span></span></div>
+      <div class="intro-chat">
+        <span class="intro-chat-h">Les copains</span>
+        <div class="intro-msg me"><span class="intro-prev">${BRAND_MARK}<span><b>${esc(INTRO_TITLE)}</b><small>${esc(SITE_NAME)} · vos dispos en dix secondes</small></span></span>On se la fait quand&nbsp;? 🧀</div>
+        <div class="intro-msg m1"><b>Karim</b>Chaud&nbsp;! Je réponds 🔥</div>
+        <div class="intro-msg m2"><b>Sophie</b>C’est fait 👍</div>
+      </div>
+    </div>
+    <span class="intro-finger"></span>`;
+}
+function introHTML() {
+  return `<div class="intro" role="group" aria-label="Comment ça marche, en animation">
+    <div class="intro-bar">
+      <div class="intro-segs">${INTRO_STEPS.map((t, k) => `<button type="button" class="intro-seg" data-act="intro-go" data-n="${k}" aria-label="Étape ${k + 1} sur ${INTRO_STEPS.length} : ${t}"><span><span></span></span></button>`).join('')}</div>
+      <button type="button" class="iconbtn intro-pp" data-act="intro-pause"></button>
+    </div>
+    <p class="intro-cap" aria-hidden="true"><span class="intro-cap-n"></span><span class="intro-cap-t"></span></p>
+    <div class="intro-stage" aria-hidden="true">${introStageHTML()}</div>
   </div>`;
+}
+
+let intro = null; // { root, scene, timers, loop, playing, paused, io }
+const iq = (sel) => intro.root.querySelector(sel);
+const iset = (sel, c, on = true) => intro.root.querySelectorAll(sel).forEach((n) => n.classList.toggle(c, on));
+const ilater = (ms, fn) => { const it = intro; it.timers.push(setTimeout(() => { if (intro === it) fn(); }, ms)); };
+// Le doigt se pose sur un élément du décor (positions relatives à la scène, sans tenir compte des transformations).
+function iPoint(sel, now) {
+  if (now) return;
+  const stage = iq('.intro-stage'), f = iq('.intro-finger'), el = iq(sel);
+  let x = el.offsetWidth * 0.62, y = el.offsetHeight * 0.62;
+  for (let n = el; n && n !== stage; n = n.offsetParent) { x += n.offsetLeft; y += n.offsetTop; }
+  if (!f.classList.contains('show')) { f.style.transition = 'none'; f.style.transform = `translate(${x + 26}px, ${y + 38}px)`; void f.offsetWidth; f.style.transition = ''; }
+  f.style.transform = `translate(${x}px, ${y}px)`;
+  f.classList.add('show');
+}
+function iTap(now) {
+  if (now) return;
+  const f = iq('.intro-finger');
+  f.classList.remove('tap'); void f.offsetWidth; f.classList.add('tap');
+}
+const iHide = () => iset('.intro-finger', 'show', false);
+function iType(now) {
+  const t = iq('.intro-title');
+  if (now) { t.textContent = INTRO_TITLE; return; }
+  t.classList.add('typing');
+  [...INTRO_TITLE].forEach((_, k) => ilater(k * 50, () => { t.textContent = INTRO_TITLE.slice(0, k + 1); }));
+  ilater(INTRO_TITLE.length * 50 + 500, () => t.classList.remove('typing'));
+}
+// Les n premières personnes ont répondu : avatars, nombre de dispos et couleur de chaque soir.
+function iAnswers(n, now) {
+  const tot = Array(10).fill(0);
+  INTRO_PEOPLE.slice(0, n).forEach(([, a]) => [...a].forEach((c, k) => { if (c !== '0') tot[k]++; }));
+  intro.root.querySelectorAll('.intro-cal .pill').forEach((p) => {
+    const k = +p.dataset.k;
+    p.className = `pill heat h${tot[k]}`;
+    p.lastElementChild.textContent = tot[k];
+    if (!now && n && INTRO_PEOPLE[n - 1][1][k] !== '0') { void p.offsetWidth; p.classList.add('bump'); }
+  });
+  intro.root.querySelectorAll('.intro-av').forEach((a, k) => a.classList.toggle('in', k < n));
+  iq('.intro-count').textContent = n ? `${INTRO_PEOPLE[n - 1][0]} a répondu` : 'En attente des réponses';
+  iq('.intro-sub').textContent = n ? plural(n, 'réponse') : 'Aucune réponse pour l’instant';
+}
+const INTRO_SCRIPT = [
+  [ // 1. Les créneaux
+    [300, (now) => iType(now)],
+    [1500, (now) => iPoint('.intro-pick', now)],
+    [2100, (now) => {
+      const mon = introMonday();
+      iTap(now); iset('.intro-pick', 'on'); iset('.intro-cal', 'open');
+      iq('.intro-sub').textContent = `10 soirs proposés · ${fmt(fDM, mon)} → ${fmt(fDM, mon + 11)}`;
+    }],
+    [3500, (now) => iPoint('.intro-cta', now)],
+    [4100, (now) => { iTap(now); iset('.intro-cta', 'on'); }],
+  ],
+  [ // 2. Le lien
+    [0, () => { iHide(); iset('.intro-sheet', 'in'); }],
+    [1000, (now) => iPoint('.intro-copy', now)],
+    [1600, (now) => { iTap(now); iset('.intro-copy', 'on'); }],
+    [2200, () => { iHide(); iset('.intro-msg.me', 'in'); }],
+    [3100, () => iset('.intro-msg.m1', 'in')],
+    [3800, () => iset('.intro-msg.m2', 'in')],
+  ],
+  [ // 3. Les dispos
+    [0, (now) => {
+      iset('.intro-sheet', 'in', false); iset('.intro-cal', 'heat');
+      iq('.intro-tools').dataset.s = 'people'; iq('.intro-foot').dataset.s = 'live';
+      iAnswers(0, now);
+    }],
+    ...INTRO_PEOPLE.map((_, k) => [1000 + k * 1000, (now) => iAnswers(k + 1, now)]),
+  ],
+  [ // 4. La date
+    [300, () => {
+      iset('.intro-cal', 'done'); iset(`.intro-cal .pill[data-k="${INTRO_BEST}"]`, 'best');
+      iq('.intro-foot').dataset.s = 'best'; iq('.intro-count').textContent = 'Tout le monde a répondu';
+    }],
+    [1700, (now) => iPoint('.intro-choose', now)],
+    [2300, (now) => {
+      iTap(now); iset('.intro-best', 'on'); iset(`.intro-cal .pill[data-k="${INTRO_BEST}"]`, 'final');
+      iq('.intro-sub').textContent = 'Date choisie · à vos agendas\u00a0!';
+    }],
+    [3100, () => iHide()],
+  ],
+];
+
+function introClear() { intro.timers.forEach(clearTimeout); intro.timers = []; }
+// Décor tel qu'à la fin de la scène k (k = -1 : décor de départ), sans transition.
+function introShow(k) {
+  intro.root.classList.add('instant');
+  iq('.intro-stage').innerHTML = introStageHTML();
+  for (let j = 0; j <= k; j++) INTRO_SCRIPT[j].forEach(([, fn]) => fn(true));
+  void intro.root.offsetWidth;
+  intro.root.classList.remove('instant');
+}
+// Barre d'étapes (la scène en cours se remplit pendant qu'elle joue), légende et bouton pause.
+function introBar() {
+  const { root, scene, playing } = intro;
+  root.querySelectorAll('.intro-seg').forEach((b, j) => {
+    const fill = b.firstElementChild.firstElementChild;
+    fill.style.transition = 'none';
+    fill.style.transform = `scaleX(${j < scene || (j === scene && !playing) ? 1 : 0})`;
+    if (j === scene && playing) { void fill.offsetWidth; fill.style.transition = `transform ${INTRO_DUR[j]}ms linear`; fill.style.transform = 'scaleX(1)'; }
+    if (j === scene) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  iq('.intro-cap-n').textContent = scene + 1;
+  iq('.intro-cap-t').textContent = INTRO_STEPS[scene];
+  const pp = iq('.intro-pp');
+  pp.hidden = reduceMotion;
+  pp.innerHTML = icon(playing ? 'pause' : 'play', 18);
+  pp.setAttribute('aria-label', playing ? 'Mettre l’animation en pause' : 'Relancer l’animation');
+}
+function introPlay(k, fresh) {
+  const it = intro;
+  introClear();
+  if (fresh) introShow(k - 1);
+  it.scene = k; it.playing = true; it.paused = false;
+  introBar();
+  INTRO_SCRIPT[k].forEach(([ms, fn]) => ilater(ms, () => { if (!it.root.isConnected) stopIntro(); else fn(false); }));
+  ilater(INTRO_DUR[k], () => {
+    if (!it.root.isConnected) stopIntro();
+    else if (k < INTRO_SCRIPT.length - 1) introPlay(k + 1, false);
+    else if (++it.loop < INTRO_LOOPS) {
+      it.root.classList.add('fading');
+      ilater(450, () => { it.root.classList.remove('fading'); introPlay(0, true); });
+    } else { it.playing = false; it.paused = true; introBar(); } // fin : on reste sur la date choisie
+  });
+}
+function stopIntro() {
+  if (!intro) return;
+  introClear();
+  if (intro.io) intro.io.disconnect();
+  intro = null;
+}
+function startIntro() {
+  stopIntro();
+  const root = app.querySelector('.intro');
+  if (!root) return;
+  // Animations réduites : la dernière scène, figée ; sinon le décor de départ, en attendant d'être à l'écran.
+  intro = { root, scene: reduceMotion ? INTRO_SCRIPT.length - 1 : 0, timers: [], loop: 0, playing: false, paused: reduceMotion, io: null };
+  introShow(reduceMotion ? intro.scene : -1);
+  introBar();
+  if (reduceMotion) return;
+  if (!('IntersectionObserver' in window)) { introPlay(0, true); return; }
+  const it = intro;
+  it.io = new IntersectionObserver((entries) => {
+    if (intro !== it) return;
+    if (!it.root.isConnected) { stopIntro(); return; }
+    const seen = entries[entries.length - 1].isIntersecting;
+    if (seen && !it.playing && !it.paused) introPlay(it.scene, true);
+    else if (!seen && it.playing) { introClear(); it.playing = false; it.root.classList.remove('fading'); }
+  }, { threshold: 0.4 });
+  it.io.observe(root);
+}
+function introToggle() {
+  if (!intro) return;
+  if (intro.playing) { introClear(); intro.playing = false; intro.paused = true; intro.root.classList.remove('fading'); introShow(intro.scene); introBar(); return; }
+  intro.loop = 0;
+  introPlay(intro.scene === INTRO_SCRIPT.length - 1 ? 0 : intro.scene, true);
+}
+function introGo(k) {
+  if (!intro) return;
+  if (intro.playing) { intro.loop = 0; intro.root.classList.remove('fading'); introPlay(k, true); return; }
+  intro.scene = k;
+  introShow(k);
+  introBar();
+}
+function introOff() {
+  const s = loadStore();
+  s.introOff = true;
+  saveStore(s);
+  stopIntro();
+  const box = document.getElementById('home-intro');
+  if (box) box.remove();
+  const cta = $('.dash-head .btn');
+  if (cta) cta.focus();
 }
 
 async function loadHomePolls(mine) {
@@ -488,6 +719,8 @@ async function loadHomePolls(mine) {
     const ids = new Set(remote.map((p) => p.id));
     // Ceux du compte d'abord (du plus récemment modifié au plus ancien), puis ceux seulement ouverts sur cet appareil.
     box.innerHTML = pollListHTML(remote.concat(mine.filter((p) => !ids.has(p.id))));
+    // Organisateur d'un sondage du compte : l'animation pour débutants n'a plus lieu d'être.
+    if (polls.some((p) => p.owner)) { stopIntro(); const ib = document.getElementById('home-intro'); if (ib) ib.remove(); }
   } catch (e) { /* la liste locale reste affichée */ }
 }
 
@@ -2189,6 +2422,10 @@ document.addEventListener('click', (ev) => {
   const refocus = () => { if (hadFocus) { const n = document.querySelector(focusSelector(el)); if (n) n.focus({ preventScroll: true }); } };
   switch (act) {
     case 'theme': cycleTheme(); break;
+    /* accueil */
+    case 'intro-go': introGo(+el.dataset.n); break;
+    case 'intro-pause': introToggle(); break;
+    case 'intro-off': introOff(); break;
     /* création */
     case 'step': {
       const n = +el.dataset.n;
@@ -2409,6 +2646,7 @@ function route() {
   const previous = lastRoute;
   lastRoute = path;
   stopRefresh();
+  stopIntro();
   // On quitte une modification en cours : le brouillon de création revient.
   if (wiz.editing) { draft = createDraft || newDraft(); createDraft = null; wiz = { step: 1, editing: false }; }
   window.scrollTo(0, 0);

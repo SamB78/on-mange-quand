@@ -56,7 +56,8 @@ La page (`public/app.js`), ce qu'il faut savoir avant d'y toucher :
 - Jours fériés : un encadré propose de les ouvrir à tous les moments du sondage s'ils tombent hors des jours choisis ou un jour où seule une partie des moments est proposée.
 - Réponse : chaque appui fait tourner un créneau, pas dispo → dispo → si besoin → pas dispo (`NEXT_VALUE`, `tapValue`). Un jour de la semaine ou un moment entier tourne en bloc (`fillWhere`). À la souris, glisser applique la valeur du créneau de départ.
 - Créneau déjà pris (agenda Google ou date choisie dans un autre sondage du compte, `conflictOf`) : hachures rouge pâle (`.pill.ans.busy`). S'y dire dispo affiche un rappel : une bulle accrochée au créneau à la souris (`showTip`), le message du bas de l'écran au doigt (`showToast`).
-- Mémoire du navigateur : `on-mange-quand:v2` (sondages ouverts, prénom ; `made` = créé sur cet appareil, jamais oublié) et `on-mange-quand:theme`.
+- Animation d'accueil (`introHTML`, scènes dans `INTRO_SCRIPT`) : quatre scènes (créneaux, lien, dispos, date) jouées avec les vrais composants du calendrier, dans le bandeau de l'accueil des nouveaux venus, et sous « Vos sondages » tant qu'on n'a organisé aucun sondage (ni `made` ni `own` en local, ni `owner` côté compte). Elle se met en pause hors de l'écran, s'arrête après `INTRO_LOOPS` tours, reste figée si le système réduit les animations ; « Ne plus afficher » pose `introOff`.
+- Mémoire du navigateur : `on-mange-quand:v2` (sondages ouverts, prénom ; `made` = créé sur cet appareil, jamais oublié ; `introOff` = animation d'accueil masquée) et `on-mange-quand:theme`.
 
 Réglages d'un sondage (`polls.config`, validés par `validateConfig`) :
 - `t` nom, `n` précisions, `l` lieu, `ic` pictogramme (liste `ICONS` : on en ajoute à la fin, on n'en retire jamais).

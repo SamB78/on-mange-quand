@@ -14,7 +14,7 @@ Sondage de dispos pour fixer la date d'un dîner, d'une soirée jeux ou d'un wee
 3. **Répondre** : on choisit son prénom, puis on « peint » ses créneaux sur le calendrier (dispo, si besoin, pas dispo ; à la souris on peut glisser, et un jour de la semaine remplit toute sa colonne). On peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les dates déjà choisies dans ses autres sondages.
 4. **Décider** : le meilleur créneau s'affiche en haut, suivi du classement et d'un calendrier où chaque créneau est d'autant plus foncé qu'il réunit de monde. Toucher un créneau montre qui est dispo ; toucher une personne montre ses dispos. Une fois la date choisie, chacun l'ajoute à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
 
-L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux du compte. `/exemple` montre un sondage fictif où tout peut s'essayer.
+L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux du compte. Tant qu'on n'a jamais organisé de sondage, une courte animation y montre les étapes (proposer des créneaux, envoyer le lien, chacun coche ses dispos, la date ressort) ; elle se met en pause d'un clic et se masque sous la liste. `/exemple` montre un sondage fictif où tout peut s'essayer.
 
 ### Comptes
 
