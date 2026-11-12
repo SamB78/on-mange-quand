@@ -296,7 +296,6 @@ let wiz = { step: 1, editing: false };
 function freshUi(keep) {
   return {
     open: false, name: '', note: '', vals: [], editing: null, delAsk: false, savedName: '', pollDelAsk: false,
-    brush: 1,      // pinceau de la réponse : 1 dispo, 2 si besoin, 0 gomme
     pick: null,    // créneau détaillé dans les résultats
     focus: null,   // personne dont on regarde les dispos dans les résultats
     created: !!(keep && keep.created),
@@ -1195,12 +1194,15 @@ function setVals(fn) {
   ui.vals = poll.slots.map((_, i) => fn(i, ui.vals[i] || 0));
   paintSlots();
 }
-// Applique le pinceau à un groupe de créneaux ; s'ils l'ont déjà tous, on les efface.
+// Un groupe de créneaux tourne comme un seul : tous dispo, puis tous si besoin, puis tous effacés.
+// Un groupe mélangé repart de « dispo ».
 function fillWhere(test) {
   const idx = poll.slots.map((sl, i) => (test(sl) ? i : -1)).filter((i) => i >= 0);
-  const all = idx.every((i) => (ui.vals[i] || 0) === ui.brush);
+  if (!idx.length) return;
+  const first = ui.vals[idx[0]] || 0;
+  const next = idx.every((i) => (ui.vals[i] || 0) === first) ? NEXT_VALUE[first] : 1;
   const set = new Set(idx);
-  setVals((i, v) => (set.has(i) ? (all ? 0 : ui.brush) : v));
+  setVals((i, v) => (set.has(i) ? next : v));
 }
 
 function openAnswer(name) {
@@ -1243,7 +1245,7 @@ function answerHTML(c) {
   const del = !ui.editing ? '' : ui.delAsk
     ? `<div class="confirm"><span>Supprimer la réponse de ${esc(ui.editing)}&nbsp;?</span><button type="button" class="btn sm danger" data-act="del-confirm">Supprimer</button><button type="button" class="btn sm" data-act="del-cancel">Annuler</button></div>`
     : `<button type="button" class="linkbtn danger" data-act="del-ask">Supprimer la réponse de ${esc(ui.editing)}</button>`;
-  const brushes = [[1, 'Dispo', 's1'], [2, 'Si besoin', 's2'], [0, 'Pas dispo', 's0']];
+  const turns = [['1 fois', 'Dispo', 's1'], ['2 fois', 'Si besoin', 's2'], ['3 fois', 'Pas dispo', 's0']];
   return `<section class="card answer" id="answer" aria-labelledby="a-h">
     <div class="row-between"><h2 id="a-h">${ui.editing ? `Dispos de ${esc(ui.editing)}` : 'Vos dispos'}</h2><button type="button" class="iconbtn" data-act="close-answer" aria-label="Fermer">${icon('x')}</button></div>
     <div class="field">
@@ -1254,10 +1256,10 @@ function answerHTML(c) {
       ${auth.user && !ui.editing && !poll.example ? '<p class="hint">Connecté&nbsp;: cette réponse sera liée à votre compte. Vous seul, ou l’organisateur, pourrez la modifier.</p>' : ''}
     </div>
     <div class="field">
-      <span class="label" id="brush-l">Peignez vos créneaux</span>
-      <div class="brush" role="radiogroup" aria-labelledby="brush-l">${brushes.map(([v, label, cls]) =>
-        `<button type="button" role="radio" class="brush-b ${cls}" data-act="brush" data-v="${v}" aria-checked="${ui.brush === v}"><span class="mk" aria-hidden="true"></span>${label}</button>`).join('')}</div>
-      <p class="hint">Choisissez une couleur, puis touchez les créneaux. Touchez un jour de la semaine pour remplir toute la colonne.</p>
+      <span class="label">Touchez vos créneaux</span>
+      <ol class="turns">${turns.map(([n, label, cls]) =>
+        `<li class="turn ${cls}"><span class="mk" aria-hidden="true"></span><span><small>${n}</small>${label}</span></li>`).join('')}</ol>
+      <p class="hint">Chaque appui fait passer un créneau au choix suivant. Touchez un jour de la semaine pour toute la colonne.</p>
     </div>
     <div class="quick">
       <button type="button" class="chip sm" data-act="bulk" data-v="1">Tout cocher</button>
@@ -1391,9 +1393,9 @@ function agendaToolsHTML() {
     out.push(`<button type="button" class="btn sm gcal" data-act="agenda-google">${GOOGLE_ICON}Comparer avec mon agenda Google</button>`);
   }
   if (a.google) {
-    out.push(`<span>${n ? `${plural(n, 'créneau', 'créneaux')} déjà pris dans votre agenda${a.polls && a.polls.size ? ' ou vos autres repas' : ''} (point rouge).` : 'Votre agenda est libre sur tous ces créneaux.'}</span>`);
+    out.push(`<span>${n ? `${plural(n, 'créneau', 'créneaux')} déjà pris dans votre agenda${a.polls && a.polls.size ? ' ou vos autres repas' : ''} (hachurés).` : 'Votre agenda est libre sur tous ces créneaux.'}</span>`);
   } else if (n) {
-    out.push(`<span>${plural(n, 'créneau', 'créneaux')} en conflit avec vos autres repas (point rouge).</span>`);
+    out.push(`<span>${plural(n, 'créneau', 'créneaux')} en conflit avec vos autres repas (hachurés).</span>`);
   }
   if ((a.google || n) && n < total) out.push(`<button type="button" class="chip sm" data-act="fill-free">Cocher les ${plural(total - n, 'créneau libre', 'créneaux libres')}</button>`);
   if (GOOGLE_CLIENT_ID && !a.google) out.push('<span class="hint">Google ne transmet que vos plages occupées, rien n’est enregistré.</span>');
@@ -1752,7 +1754,7 @@ async function nativeShare() {
   } catch (e) { /* partage annulé */ }
 }
 
-// Un créneau de la réponse : le pinceau s'applique ; retoucher un créneau déjà de cette couleur l'efface.
+// Un créneau de la réponse prend la valeur donnée (voir tapValue pour l'ordre des appuis).
 function setSlot(i, v) {
   if ((ui.vals[i] || 0) === v) return;
   ui.vals[i] = v;
@@ -1764,7 +1766,47 @@ function setSlot(i, v) {
   const count = document.getElementById('ans-count');
   if (count) count.innerHTML = answerCountText();
 }
-const tapValue = (i) => ((ui.vals[i] || 0) === ui.brush ? 0 : ui.brush);
+// Un appui fait tourner le créneau : pas dispo → dispo → si besoin → pas dispo.
+const NEXT_VALUE = [1, 2, 0];
+const tapValue = (i) => NEXT_VALUE[ui.vals[i] || 0];
+// Rappel quand on se dit dispo sur un créneau déjà pris dans son agenda ou par un autre repas.
+// Avec une souris, le rappel part du créneau touché (bulle) ; au doigt, c'est le message du bas de l'écran.
+function warnBusy(i, v, el) {
+  const c = v ? conflictOf(i) : '';
+  if (!c) { hideTip(); return; }
+  const msg = `Vous avez déjà quelque chose à ce moment-là (${c}).`;
+  if (el && matchMedia('(hover: hover) and (pointer: fine)').matches) showTip(el, msg); else showToast(msg);
+}
+
+/* ---------- Bulle accrochée à un élément : disparaît seule, ou dès qu'on fait défiler la page ---------- */
+let tipEl = null, tipTimer = null;
+function hideTip() {
+  clearTimeout(tipTimer);
+  if (tipEl) tipEl.hidden = true;
+}
+function showTip(anchor, msg) {
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.className = 'tip';
+    tipEl.setAttribute('role', 'status');
+    document.body.appendChild(tipEl);
+    window.addEventListener('scroll', hideTip, { passive: true });
+    window.addEventListener('resize', hideTip);
+  }
+  tipEl.textContent = msg;
+  tipEl.hidden = false;
+  // Au-dessus du créneau, centrée sur lui sans sortir de l'écran ; en dessous s'il n'y a pas la place.
+  const r = anchor.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  const mid = r.left + r.width / 2;
+  const left = Math.max(8, Math.min(mid - w / 2, document.documentElement.clientWidth - w - 8));
+  const below = r.top - h - 10 < 8;
+  tipEl.classList.toggle('below', below);
+  tipEl.style.left = left + 'px';
+  tipEl.style.top = (below ? r.bottom + 10 : r.top - h - 10) + 'px';
+  tipEl.style.setProperty('--arrow', Math.max(14, Math.min(mid - left, w - 14)) + 'px');
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(hideTip, 4000);
+}
 
 function scrollToId(id) {
   const el = document.getElementById(id);
@@ -2147,14 +2189,12 @@ document.addEventListener('click', (ev) => {
       document.querySelectorAll('[data-act="iam"]').forEach((b) => b.setAttribute('aria-pressed', String(b === el)));
       break;
     }
-    case 'brush':
-      ui.brush = +el.dataset.v;
-      document.querySelectorAll('[data-act="brush"]').forEach((b) => b.setAttribute('aria-checked', String(b === el)));
-      break;
     case 'slot': {
       if (skipClick === el) { skipClick = null; break; }
       const i = +el.dataset.i;
-      setSlot(i, tapValue(i));
+      const v = tapValue(i);
+      setSlot(i, v);
+      warnBusy(i, v, el);
       break;
     }
     case 'bulk': setVals(() => +el.dataset.v); break;
@@ -2221,6 +2261,7 @@ app.addEventListener('pointerdown', (ev) => {
   const i = +el.dataset.i;
   paintValue = tapValue(i);
   setSlot(i, paintValue);
+  warnBusy(i, paintValue, el);
   skipClick = el;
   ev.preventDefault(); // pas de sélection de texte pendant le glisser
   el.focus({ preventScroll: true });
