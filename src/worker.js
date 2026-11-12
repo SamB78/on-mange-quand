@@ -446,16 +446,33 @@ async function handleFeed(request, env, url, parts) {
   });
 }
 
-// Limite de débit, par adresse IP : approximative (comptée par emplacement Cloudflare), elle freine les scripts
-// sans jamais gêner un groupe normal. Seules les écritures sont comptées. Sans la liaison (wrangler.jsonc), pas de limite.
-async function tooFast(env, name, request) {
-  const limiter = env[name];
-  if (!limiter) return false;
+// Limite de débit maison (table rate_hits) : écritures par minute et par adresse IP. Elle freine les scripts sans
+// jamais gêner un groupe normal ; les lectures ne sont pas comptées. (La limite intégrée aux Workers ne bloquait rien.)
+export const RATE_LIMITS = { write: 60, create: 10 };
+// Adresse comptée : l'IPv4 telle quelle ; en IPv6, le bloc /64, à l'intérieur duquel un appareil change d'adresse à volonté.
+export function ipKey(ip) {
+  if (!ip) return 'inconnue';
+  if (!ip.includes(':')) return ip;
+  const [head, tail] = ip.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  return groups.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':') + '::/64';
+}
+async function tooFast(env, bucket, request) {
+  const minute = Math.floor(Date.now() / 60000);
+  const key = ipKey(request.headers.get('cf-connecting-ip'));
   try {
-    const { success } = await limiter.limit({ key: request.headers.get('cf-connecting-ip') || 'local' });
-    return !success;
+    const ipHash = (await sha256Hex(`limite|${minute}|${key}`)).slice(0, 32); // jamais l'adresse elle-même
+    const row = await env.DB.prepare(
+      `INSERT INTO rate_hits (bucket, ip_hash, minute, hits) VALUES (?, ?, ?, 1)
+       ON CONFLICT (bucket, ip_hash, minute) DO UPDATE SET hits = hits + 1
+       RETURNING hits`
+    ).bind(bucket, ipHash, minute).first();
+    return row.hits > RATE_LIMITS[bucket];
   } catch (e) {
-    return false; // limiteur indisponible : on laisse passer plutôt que de bloquer tout le monde
+    console.error('Limite de débit indisponible', e);
+    return false; // compteur indisponible : on laisse passer plutôt que de bloquer tout le monde
   }
 }
 const TOO_FAST = 'Trop de demandes en peu de temps : patientez une minute, puis réessayez.';
@@ -464,8 +481,8 @@ async function handleApi(request, env, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me' | 'agenda', ...]
   const method = request.method;
   if (method !== 'GET' && method !== 'HEAD') {
-    if (await tooFast(env, 'LIMIT_WRITE', request)) throw new HttpError(429, TOO_FAST);
-    if (parts[1] === 'polls' && parts.length === 2 && await tooFast(env, 'LIMIT_CREATE', request)) throw new HttpError(429, TOO_FAST);
+    if (await tooFast(env, 'write', request)) throw new HttpError(429, TOO_FAST);
+    if (parts[1] === 'polls' && parts.length === 2 && await tooFast(env, 'create', request)) throw new HttpError(429, TOO_FAST);
   }
   if (parts[1] === 'me') return handleMe(request, env, url, parts);
   if (parts[1] === 'agenda') return handleFeed(request, env, url, parts);
@@ -711,12 +728,14 @@ export async function purge(env, now = Date.now()) {
   const where = `(deleted_at IS NOT NULL AND deleted_at < ?1)
               OR (json_extract(config, '$.e') < ?2 AND updated_at < ?3)`;
   const args = [now - TRASH_DAYS * DAY_MS, ymd(Math.floor(cutoff.getTime() / DAY_MS)), cutoff.getTime()];
-  const [answers, tries, polls] = await env.DB.batch([
+  const [answers, tries, polls, hits] = await env.DB.batch([
     env.DB.prepare(`DELETE FROM answers WHERE poll_id IN (SELECT id FROM polls WHERE ${where})`).bind(...args),
     env.DB.prepare(`DELETE FROM pin_tries WHERE poll_id IN (SELECT id FROM polls WHERE ${where})`).bind(...args),
     env.DB.prepare(`DELETE FROM polls WHERE ${where}`).bind(...args),
+    // Compteurs de la limite de débit : plus d'une heure, ils ne servent plus à rien.
+    env.DB.prepare('DELETE FROM rate_hits WHERE minute < ?').bind(Math.floor(now / 60000) - 60),
   ]);
-  const done = { polls: polls.meta.changes, answers: answers.meta.changes, pinTries: tries.meta.changes };
+  const done = { polls: polls.meta.changes, answers: answers.meta.changes, pinTries: tries.meta.changes, rateHits: hits.meta.changes };
   console.log('Effacement automatique', JSON.stringify(done));
   return done;
 }
