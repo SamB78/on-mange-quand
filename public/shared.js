@@ -53,30 +53,54 @@ export function ymd(d, sep = '') {
   return [t.getUTCFullYear(), String(t.getUTCMonth() + 1).padStart(2, '0'), String(t.getUTCDate()).padStart(2, '0')].join(sep);
 }
 
+// Genre de créneaux d'un sondage (champ k) :
+// - absent : des moments de la journée (MOMENTS), pour « Journée », « Demi-journée » et « Repas » ;
+// - 'h' : des horaires précis. h liste les plages [début, fin] en « HHMM », triées ; m et o ont un bit par plage de h ;
+// - 'j' : des séjours sur plusieurs jours (« Semaine », « Week-end »). j les liste en paires [a, b] de demi-journées
+//   comptées depuis s (a = première demi-journée, b = dernière, comprises ; paire = matin, impaire = après-midi et soir).
+//   La page les calcule (jours fériés compris) et les envoie tels quels ; jr garde les réglages qui les ont produits.
+export const MAX_RANGES = 8;
+// Un séjour déborde parfois de la période (week-end qui commence le vendredi) : la période s'allonge d'autant.
+export const STAY_MARGIN = 14;
+
 // Créneaux d'un sondage, dans l'ordre.
 // s, e : début et fin ; m : pour chaque jour de la semaine, les moments possibles (un bit par moment) ;
 // x : jours exclus ; o : jours réglés à part, en paires [jour, moments], qui passent avant les règles de m ;
 // a : ancienne forme, jours ouverts à tous les moments du sondage (la page n'en écrit plus).
 // Les jours de x, a et o sont des écarts en jours depuis s. Les anciens sondages n'ont ni « a » ni « o ».
+// Un créneau : d jour, t moment (ou plage de h) ; h ses horaires précis ; un séjour va de d à d2,
+// ah = 1 s'il commence l'après-midi ou le soir, bh = 0 s'il finit le matin.
 export function buildSlots(cfg) {
   const s = parseYmd(cfg.s), e = parseYmd(cfg.e);
+  if (cfg.k === 'j') return (cfg.j || []).map(([a, b]) => ({ d: s + (a >> 1), t: 0, ah: a & 1, d2: s + (b >> 1), bh: b & 1 }));
   const ex = new Set(cfg.x || []), add = new Set(cfg.a || []), own = new Map(cfg.o || []);
   const all = cfg.m.reduce((u, r) => u | r, 0);
+  const n = cfg.k === 'h' ? cfg.h.length : MOMENTS.length;
   const slots = [];
   for (let d = s; d <= e; d++) {
     if (ex.has(d - s)) continue;
     const r = own.has(d - s) ? own.get(d - s) : add.has(d - s) ? all : cfg.m[weekday(d)];
-    for (let t = 0; t < MOMENTS.length; t++) if (r & (1 << t)) slots.push({ d, t });
+    for (let t = 0; t < n; t++) if (r & (1 << t)) slots.push(cfg.k === 'h' ? { d, t, h: cfg.h[t] } : { d, t });
   }
   return slots;
 }
 
+// Horaires d'un créneau, heure de Paris : [début, fin] en « HHMM », ou null pour un jour entier ou un séjour.
+export const slotTimes = (sl) => (sl.d2 != null ? null : sl.h || MOMENT_HOURS[sl.t]);
+// Dernier jour d'un créneau : le jour même, ou la fin du séjour.
+export const slotEnd = (sl) => (sl.d2 != null ? sl.d2 : sl.d);
+// Ce qui identifie un créneau d'une version à l'autre du sondage : les dispos le suivent quand l'organisateur modifie.
+export const slotId = (sl) => (sl.d2 != null ? `j${sl.d}.${sl.ah}.${sl.d2}.${sl.bh}` : sl.h ? `h${sl.d}.${sl.h.join('-')}` : `m${sl.d}.${sl.t}`);
+
 // Ce qui fixe la liste des créneaux. La page la renvoie avec une réponse : le serveur refuse si elle est périmée.
-// Les jours ajoutés ou réglés à part n'y figurent que s'il y en a, pour que la clé des anciens sondages ne change pas.
+// Les jours ajoutés ou réglés à part, les plages et les séjours n'y figurent que s'il y en a :
+// la clé des anciens sondages ne change pas.
 export const slotsKey = (cfg) =>
   [cfg.s, cfg.e, cfg.m.join('.'), (cfg.x || []).join('.')]
     .concat(cfg.a && cfg.a.length ? [cfg.a.join('.')] : [])
     .concat(cfg.o && cfg.o.length ? ['o' + cfg.o.map((p) => p.join(':')).join('.')] : [])
+    .concat(cfg.k === 'h' ? ['h' + cfg.h.map((r) => r.join('-')).join('.')] : [])
+    .concat(cfg.k === 'j' ? ['j' + cfg.j.map((p) => p.join(':')).join('.')] : [])
     .join('|');
 
 // Numéro du jour d'aujourd'hui à Paris : la date limite de réponse se juge à l'heure de Paris.
