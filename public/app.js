@@ -9,6 +9,8 @@ import {
 const STORE_KEY = 'on-mange-quand:v2';
 const THEME_KEY = 'on-mange-quand:theme';
 const REFRESH_MS = 15000;
+// Adresse de contact affichée (mentions légales, confidentialité) : questions, droits sur les données, signalements.
+const CONTACT = 'contact@dispos.day';
 const ID_RE = /^[a-z2-7]{10}$/;
 const JOURNEE = 1 << 0, MIDI = 1 << 2, APREM = 1 << 3, SOIR = 1 << 4;
 const WD = ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'];
@@ -280,7 +282,7 @@ function slotCal(slots, pillHTML, opts) {
 }
 
 /* ---------- État ---------- */
-let view = null;      // 'home' | 'create' | 'edit' | 'poll' | 'pin' | 'deleted' | 'loading' | 'error' | 'account' | 'privacy'
+let view = null;      // 'home' | 'create' | 'edit' | 'poll' | 'pin' | 'deleted' | 'loading' | 'error' | 'account' | 'privacy' | 'legal'
 let lastRoute = null;
 let pinFor = null;    // sondage dont on demande le code
 let deletedFor = null; // sondage affiché comme supprimé (corbeille)
@@ -2084,6 +2086,8 @@ function showPrivacy() {
       </ul>
       <h2>Ce que nous ne faisons pas</h2>
       <p>Pas de publicité, pas de revente, pas de pistage. Les données servent uniquement à faire fonctionner les sondages. Comme pour tout site, nos hébergeurs gardent des journaux techniques (adresse IP, heure de connexion) pour le bon fonctionnement et la sécurité.</p>
+      <h2>Durée de conservation</h2>
+      <p>Un sondage est effacé automatiquement, avec toutes ses réponses, ${KEEP_MONTHS}&nbsp;mois après sa dernière date proposée s’il n’a pas été modifié depuis. Un sondage supprimé reste ${TRASH_DAYS}&nbsp;jours dans la corbeille, le temps de pouvoir le restaurer, puis il est effacé. Un compte est gardé tant que vous ne le supprimez pas.</p>
       <h2>Sondages protégés par un code</h2>
       <p>L’organisateur peut protéger un sondage par un code. Le code est enregistré avec le sondage pour qu’il puisse toujours le retrouver. Une fois le bon code saisi, votre navigateur garde un cookie technique, propre à ce sondage, pour ne pas vous le redemander. Pour bloquer les essais en série, les essais de code sont comptés pendant 15&nbsp;minutes avec une empreinte de votre adresse IP, puis effacés.</p>
       <h2>Agenda</h2>
@@ -2095,6 +2099,31 @@ function showPrivacy() {
       <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase). Les polices d’écriture sont servies par le site lui-même.</p>
       <h2>Supprimer votre compte</h2>
       <p>Dans <a href="/compte">Mon compte</a>, touchez «&nbsp;Supprimer mon compte&nbsp;». Votre compte est effacé chez Firebase. Vos réponses restent dans les sondages mais ne sont plus liées à vous, et les sondages que vous organisiez restent accessibles à leurs participants, sans organisateur ni code d’accès.</p>
+      <h2>Vos droits</h2>
+      <p>Vous pouvez demander l’accès à vos données, leur rectification ou leur effacement, ou vous opposer à leur traitement, en écrivant à <a href="mailto:${CONTACT}">${CONTACT}</a>. Le responsable du traitement est l’éditeur du site (voir les <a href="/mentions-legales">mentions légales</a>). Si vous estimez que vos droits ne sont pas respectés, vous pouvez vous adresser à la CNIL (cnil.fr).</p>
+    </article></div>`;
+}
+
+function showLegal() {
+  view = 'legal';
+  poll = null;
+  document.title = 'Mentions légales · ' + SITE_NAME;
+  renderTopnav();
+  app.innerHTML = `<div class="page narrow">
+    <button type="button" class="back" data-act="back">${icon('left', 16)}Retour</button>
+    <article class="prose">
+      <h1>Mentions légales</h1>
+      <h2>Éditeur</h2>
+      <p>${SITE_NAME} est un site personnel et non commercial. Son éditeur, un particulier, a choisi de ne pas publier son identité, comme le permet l’article&nbsp;6, III, 2 de la loi n°&nbsp;2004-575 du 21&nbsp;juin&nbsp;2004 pour la confiance dans l’économie numérique&nbsp;; ses coordonnées ont été communiquées à l’hébergeur.</p>
+      <p>Contact&nbsp;: <a href="mailto:${CONTACT}">${CONTACT}</a></p>
+      <h2>Hébergeur</h2>
+      <p>Cloudflare, Inc., 101 Townsend Street, San Francisco, CA&nbsp;94107, États-Unis. Téléphone&nbsp;: +1&nbsp;650&nbsp;319&nbsp;8930.</p>
+      <h2>Signaler un contenu</h2>
+      <p>Les noms, lieux, prénoms et petits mots des sondages sont écrits par leurs créateurs et leurs participants. Pour signaler un contenu illicite, écrivez à <a href="mailto:${CONTACT}">${CONTACT}</a> en indiquant l’adresse du sondage et le passage concerné&nbsp;: il sera retiré rapidement s’il est manifestement illicite.</p>
+      <h2>Données personnelles</h2>
+      <p>Voir la page <a href="/confidentialite">Confidentialité</a>.</p>
+      <h2>Crédits</h2>
+      <p>Polices Bricolage Grotesque et Instrument Sans, sous licence SIL Open Font License.</p>
     </article></div>`;
 }
 
@@ -2384,11 +2413,12 @@ function route() {
   if (wiz.editing) { draft = createDraft || newDraft(); createDraft = null; wiz = { step: 1, editing: false }; }
   window.scrollTo(0, 0);
   if (path === '/compte') {
-    if (previous && previous !== '/compte' && previous !== '/confidentialite') accountReturn = previous;
+    if (previous && previous !== '/compte' && previous !== '/confidentialite' && previous !== '/mentions-legales') accountReturn = previous;
     account = { mode: 'in', delAsk: false, email: account.email };
     return showAccount();
   }
   if (path === '/confidentialite') return showPrivacy();
+  if (path === '/mentions-legales') return showLegal();
   if (path === '/') return showHome();
   if (path === '/nouveau') return showCreate();
   if (path === '/exemple') {

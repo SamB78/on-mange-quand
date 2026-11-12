@@ -19,7 +19,7 @@
 //   DELETE /api/me                        détacher le compte de ses sondages et réponses (avant sa suppression)
 //   GET    /api/agenda/:token.ics         le lien d'agenda : les dates choisies du compte (sans connexion, le jeton suffit)
 //
-// Toute autre adresse sans extension (/, /nouveau, /s/:id, /compte…) rend la page ; pour /s/:id, le titre du sondage
+// Toute autre adresse sans extension (/, /nouveau, /s/:id, /compte, /mentions-legales…) rend la page ; pour /s/:id, le titre du sondage
 // est glissé dans l'aperçu du lien (sauf s'il est protégé par un code).
 //
 // Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.

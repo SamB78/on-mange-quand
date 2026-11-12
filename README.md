@@ -18,7 +18,7 @@ L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux
 
 ### Comptes
 
-Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à garder la main sur ses sondages, à protéger ses réponses et à tout retrouver sur ses appareils. La page « Confidentialité » explique ce qui est conservé, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
+Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à garder la main sur ses sondages, à protéger ses réponses et à tout retrouver sur ses appareils. La page « Confidentialité » explique ce qui est conservé et combien de temps, « Mentions légales » donne l'hébergeur et le contact, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
 
 ### Qui peut faire quoi
 
