@@ -7,27 +7,31 @@ Sondage de dispos pour fixer la date d'un repas. Tout fonctionne sans compte ; u
 
 ## Comment ça marche
 
-1. On choisit la période, les moments (journée, matin, midi, après-midi, soir) et les jours possibles, puis on crée le sondage. Les **jours fériés** de la période sont signalés : s'ils tombent en dehors des jours choisis (en semaine quand on a choisi « Week-end », par exemple), on peut les ajouter d'un geste. Si on est connecté, on devient l'**organisateur** et on peut protéger le lien par un **code d'accès** (4 à 6 chiffres).
-2. On envoie le lien au groupe, une seule fois (et le code, s'il y en a un).
-3. Chacun entre son prénom, coche ses créneaux (une fois = dispo, deux fois = si besoin) et peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les repas déjà décidés dans ses autres sondages.
-4. Le meilleur créneau s'affiche en haut. Une fois la date choisie, chacun peut l'ajouter à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
+1. **Créer**, en trois étapes : le repas (nom, pictogramme, lieu), les créneaux, les options.
+   - Les créneaux se décrivent par des **règles** plutôt que par une liste de dates : une période, puis une formule toute faite (« Soirs de semaine », « Week-end », « Midis en semaine »…) ou sa propre grille jour par jour (« le soir en semaine, midi et soir le week-end », « seulement les mardis et jeudis »). Dans l'aperçu en calendrier, toucher un jour ouvre le choix de ses moments : l'exclure, l'ajouter s'il est hors des règles, ou lui donner d'autres créneaux que la règle (« Journée » remplace les autres moments) ; les **jours fériés** de la période sont signalés et s'ouvrent d'un geste à tous les moments, qu'ils tombent hors des jours choisis ou un jour où seul le soir est proposé.
+   - Options, toutes facultatives : les **invités attendus** (la page dit qui n'a pas encore répondu), les **indispensables** (les créneaux où l'un d'eux n'est pas dispo sont écartés), une **date limite de réponse**, un **nombre minimum de convives**, et, avec un compte, un **code d'accès** (4 à 6 chiffres).
+2. **Partager** le lien `/s/<identifiant>`, une seule fois (et le code, s'il y en a un). L'aperçu du lien dans WhatsApp ou iMessage porte le nom du repas.
+3. **Répondre** : on choisit son prénom, puis on « peint » ses créneaux sur le calendrier (dispo, si besoin, pas dispo ; à la souris on peut glisser, et un jour de la semaine remplit toute sa colonne). On peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les repas déjà décidés dans ses autres sondages.
+4. **Décider** : le meilleur créneau s'affiche en haut, suivi du classement et d'un calendrier où chaque créneau est d'autant plus foncé qu'il réunit de monde. Toucher un créneau montre qui est dispo ; toucher une personne montre ses dispos. Une fois la date choisie, chacun l'ajoute à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
+
+L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux du compte. `/exemple` montre un sondage fictif où tout peut s'essayer.
 
 ### Comptes
 
-Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à organiser, à protéger ses réponses et à retrouver ses sondages (« Mon compte »). La page « Confidentialité » explique ce qui est conservé, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
+Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à garder la main sur ses sondages, à protéger ses réponses et à tout retrouver sur ses appareils. La page « Confidentialité » explique ce qui est conservé, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
 
 ### Qui peut faire quoi
 
 | | Sondage créé sans compte | Sondage avec organisateur |
 |---|---|---|
 | Ouvrir le sondage | tout le monde, avec le lien | avec le lien, plus le code s'il y en a un ; l'organisateur toujours, sans code |
-| Répondre | tout le monde | tout le monde (sauf s'il est clôturé) |
-| Modifier une réponse | tout le monde | une réponse donnée sans compte : tout le monde ; avec un compte : son auteur et l'organisateur |
+| Répondre | tout le monde (sauf s'il est clôturé ou la date limite passée) | pareil |
+| Modifier une réponse | donnée sans compte : tout le monde ; avec un compte : son auteur, et qui gère le sondage | pareil |
 | Choisir la date finale | tout le monde | l'organisateur |
-| Modifier les réglages, clôturer, supprimer | personne | l'organisateur |
+| Modifier les réglages, clôturer, supprimer | depuis l'appareil qui a créé le sondage | l'organisateur, depuis tous ses appareils |
 | Ajouter, changer ou retirer le code d'accès | personne | l'organisateur |
 
-Les sondages créés avant l'arrivée des comptes sont des sondages sans organisateur.
+Un sondage créé sans compte laisse dans le navigateur de son créateur une **clé d'organisation** : c'est elle qui permet de le gérer depuis cet appareil. En se connectant, le créateur peut le **rattacher à son compte** (bloc « Organisation ») : il en devient l'organisateur et la clé ne sert plus. Les sondages créés avant l'arrivée des clés n'ont ni organisateur ni clé : leurs réglages ne changent plus.
 
 ### Code d'accès
 
@@ -42,8 +46,12 @@ Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perd
 
 | Chemin | Rôle |
 |---|---|
-| `public/index.html` | La page (HTML, CSS et JavaScript, sans dépendance) |
-| `src/worker.js` | Le serveur : sert la page et l'API (`/api/polls`, `/api/me`) |
+| `public/index.html` | La coquille de la page |
+| `public/app.css` | Les styles (thèmes clair et sombre) |
+| `public/app.js` | Toute la page : accueil, création, sondage, compte (sans dépendance) |
+| `public/shared.js` | Les règles des créneaux, lues par la page **et** par le serveur |
+| `public/firebase.js` | Le branchement de la connexion Firebase |
+| `src/worker.js` | Le serveur : l'API (`/api/polls`, `/api/me`) et l'aperçu des liens |
 | `src/auth.js` | Vérification des jetons de connexion Firebase |
 | `tests/` | Tests (`npm test`) |
 | `firebase.json` | Réglages de l'émulateur de connexion local |
@@ -71,15 +79,15 @@ npm run auth:local    # dans un premier terminal : émulateur de connexion Fireb
 npm run dev           # dans un second terminal
 ```
 
-La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests de la vérification des connexions.
+La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests (vérification des connexions, règles des créneaux).
 
 ## Brancher Firebase
 
-Le projet Firebase se renseigne à deux endroits : `CONFIG` dans le module en bas de `public/index.html` (valeurs publiques du bloc `firebaseConfig`) et `FIREBASE_PROJECT_ID` dans `wrangler.jsonc` (prod et test). Tant qu'ils sont vides, l'app fonctionne sans comptes. Chaque adresse du site doit figurer dans les « Domaines autorisés » de Firebase Authentication.
+Le projet Firebase se renseigne à deux endroits : `CONFIG` dans `public/firebase.js` (valeurs publiques du bloc `firebaseConfig`) et `FIREBASE_PROJECT_ID` dans `wrangler.jsonc` (prod et test). Tant qu'ils sont vides, l'app fonctionne sans comptes. Chaque adresse du site doit figurer dans les « Domaines autorisés » de Firebase Authentication.
 
 ## Brancher l'agenda Google
 
-Le bouton « Comparer avec mon agenda Google » utilise un client OAuth à part, **Client Web 2** (`GOOGLE_CLIENT_ID` dans `public/index.html` ; vide = bouton masqué). Le client « Web client (auto created by Google Service) » sert à la connexion Firebase : ne pas toucher à son code secret. Celui de Client Web 2 ne sert à rien, la page n'utilise que l'identifiant. Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
+Le bouton « Comparer avec mon agenda Google » utilise un client OAuth à part, **Client Web 2** (`GOOGLE_CLIENT_ID` dans `public/app.js` ; vide = bouton masqué). Le client « Web client (auto created by Google Service) » sert à la connexion Firebase : ne pas toucher à son code secret. Celui de Client Web 2 ne sert à rien, la page n'utilise que l'identifiant. Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
 
 1. **API et services → Bibliothèque** : **Google Calendar API** activée.
 2. **Google Auth Platform → Accès aux données** : niveau d'accès `https://www.googleapis.com/auth/calendar.freebusy` (lecture des disponibilités seulement). Google le range parmi les accès non sensibles : pas d'écran « application non validée », pas de limite de 100 personnes.

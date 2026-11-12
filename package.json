@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "wrangler dev --var FIREBASE_PROJECT_ID:demo-omq --var AUTH_EMULATOR_LOCAL_ONLY:1",
     "auth:local": "firebase emulators:start --only auth --project demo-omq",
-    "test": "node --test tests/auth.test.mjs",
+    "test": "node --test tests/*.test.mjs",
     "deploy": "node scripts/garde-fou-prod.mjs && wrangler deploy",
     "db:local": "wrangler d1 migrations apply on-mange-quand --local",
     "db:remote": "node scripts/garde-fou-prod.mjs && wrangler d1 migrations apply on-mange-quand --remote",
