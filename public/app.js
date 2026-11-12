@@ -397,14 +397,13 @@ function showHome(msg) {
       ${showIntro ? `<section class="intro-box" id="home-intro" aria-labelledby="intro-h">
         <div class="intro-box-text">
           <h2 id="intro-h">Et si vous organisiez le prochain&nbsp;?</h2>
-          <p class="muted">Proposez des créneaux, envoyez le lien au groupe&nbsp;: la date où tout le monde peut venir ressort toute seule.</p>
           <div class="actions"><a class="btn primary" href="/nouveau">${icon('plus')}Créer un sondage</a><button type="button" class="linkbtn" data-act="intro-off">Ne plus afficher</button></div>
         </div>
         ${introHTML()}
       </section>` : ''}
       ${!auth.user && auth.enabled ? `<aside class="nudge">
         ${icon('lock', 22)}
-        <p><b>Retrouvez-les partout.</b> Avec un compte gratuit, vos sondages vous suivent sur tous vos appareils, vous seul en décidez la date, et vous pouvez les protéger par un code.</p>
+        <p><b>Gardez la main.</b> Avec un compte gratuit, vos sondages vous suivent partout.</p>
         <a class="btn sm" href="/compte">Créer un compte</a>
       </aside>` : ''}
     </div>`;
@@ -416,9 +415,9 @@ function showHome(msg) {
     ${alert}
     <section class="hero">
       <div class="hero-text">
-        <p class="kicker">Gratuit · sans inscription · sans pub</p>
+        <p class="kicker">Gratuit · sans inscription</p>
         <h1>Tout le monde est partant. Reste à trouver <em>quand</em>.</h1>
-        <p class="lede">Un dîner, une soirée jeux, un week-end entre potes&nbsp;: proposez des créneaux, partagez un lien. Chacun coche ses dispos en dix secondes et la meilleure date ressort toute seule.</p>
+        <p class="lede">Proposez des créneaux, partagez un lien&nbsp;: la bonne date ressort toute seule.</p>
         <div class="hero-cta">
           <a class="btn primary lg" href="/nouveau">Créer un sondage${icon('right')}</a>
           <a class="btn lg" href="/exemple">Voir un exemple</a>
@@ -426,21 +425,13 @@ function showHome(msg) {
       </div>
       ${introHTML()}
     </section>
-    <section class="how" aria-labelledby="how-h">
-      <h2 id="how-h">Trois étapes, pas une de plus</h2>
-      <ol class="how-list">
-        <li><span class="how-n">1</span><h3>Posez vos règles</h3><p>Les soirs de semaine, un midi le week-end, seulement les mardis et jeudis&nbsp;: vous choisissez la période et les créneaux qui vous arrangent.</p></li>
-        <li><span class="how-n">2</span><h3>Partagez le lien</h3><p>Un seul lien pour tout le groupe, sur WhatsApp ou ailleurs. Personne n’a besoin de créer un compte pour répondre.</p></li>
-        <li><span class="how-n">3</span><h3>La date ressort</h3><p>Les dispos se superposent sur un calendrier. Vous choisissez le créneau gagnant, chacun l’ajoute à son agenda.</p></li>
-      </ol>
-    </section>
     <section class="features" aria-labelledby="feat-h">
-      <h2 id="feat-h">Pensé pour les groupes qui n’arrivent jamais à se décider</h2>
+      <h2 id="feat-h">Pensé pour les groupes indécis</h2>
       <ul class="feat-list">
-        <li>${icon('rules', 22)}<h3>Des règles, pas une liste de dates</h3><p>«&nbsp;Le soir en semaine, midi et soir le week-end&nbsp;»&nbsp;: les créneaux se calculent tout seuls, jours fériés compris.</p></li>
-        <li>${icon('star', 22)}<h3>Les indispensables</h3><p>Pas de raclette sans celui qui a l’appareil. Marquez qui doit être là&nbsp;: les créneaux sans eux sont écartés.</p></li>
-        <li>${icon('clock', 22)}<h3>Une date limite</h3><p>Fixez jusqu’à quand on peut répondre. Fini les sondages qui traînent.</p></li>
-        <li>${icon('calendar', 22)}<h3>Branché sur votre agenda</h3><p>Comparez les créneaux avec votre agenda Google avant de répondre, puis ajoutez la date choisie en un geste.</p></li>
+        <li>${icon('rules', 22)}<h3>Des règles, pas des dates</h3><p>«&nbsp;Le soir en semaine&nbsp;» suffit.</p></li>
+        <li>${icon('star', 22)}<h3>Les indispensables</h3><p>Pas de date sans eux.</p></li>
+        <li>${icon('clock', 22)}<h3>Une date limite</h3><p>Fini les sondages qui traînent.</p></li>
+        <li>${icon('calendar', 22)}<h3>Votre agenda</h3><p>Google Agenda, branché.</p></li>
       </ul>
     </section>
     <section class="plans" aria-labelledby="plans-h">
@@ -450,9 +441,8 @@ function showHome(msg) {
           <h3>Sans compte</h3>
           <p class="muted">Pour aller vite.</p>
           <ul>
-            <li>${icon('check', 16)}Créer un sondage et y répondre</li>
-            <li>${icon('check', 16)}Toute personne qui a le lien peut le gérer</li>
-            <li>${icon('check', 16)}Tout le monde peut choisir la date</li>
+            <li>${icon('check', 16)}Créer et répondre</li>
+            <li>${icon('check', 16)}Tout le groupe gère le sondage</li>
           </ul>
           <a class="btn" href="/nouveau">Créer un sondage</a>
         </div>
@@ -460,10 +450,9 @@ function showHome(msg) {
           <h3>Avec un compte gratuit</h3>
           <p class="muted">Pour garder la main.</p>
           <ul>
-            <li>${icon('check', 16)}Vous seul choisissez la date, modifiez ou clôturez</li>
-            <li>${icon('check', 16)}Un code d’accès pour protéger le lien</li>
-            <li>${icon('check', 16)}Vos réponses ne peuvent pas être modifiées par d’autres</li>
-            <li>${icon('check', 16)}Vos sondages sur tous vos appareils, vos dates dans votre agenda</li>
+            <li>${icon('check', 16)}Vous seul décidez de la date</li>
+            <li>${icon('check', 16)}Un code pour protéger le lien</li>
+            <li>${icon('check', 16)}Vos sondages sur tous vos appareils</li>
           </ul>
           <a class="btn primary" href="/compte">Créer un compte</a>
         </div>
@@ -478,7 +467,7 @@ function showHome(msg) {
 // Une scène = des étapes [délai en ms, fonction] qui posent des classes sur le décor ; les transitions CSS font le reste.
 // Chaque fonction reçoit `now` : vrai pour se placer directement à la fin (saut d'étape, pause, animations réduites).
 // Elle se met en pause hors de l'écran, s'arrête après INTRO_LOOPS tours, et reste figée si le système demande moins d'animations.
-const INTRO_STEPS = ['Vous proposez des créneaux', 'Vous envoyez le lien au groupe', 'Chacun coche ses dispos', 'La meilleure date ressort'];
+const INTRO_STEPS = ['Proposez des créneaux', 'Partagez le lien', 'Chacun répond', 'La date ressort'];
 const INTRO_DUR = [4800, 4600, 5400, 5200];
 const INTRO_LOOPS = 2;
 const INTRO_TITLE = 'Raclette chez Léa';
@@ -494,27 +483,26 @@ function introStageHTML() {
     const w = c % 7, num = `<span class="day-n">${dateOf(mon + c)}</span>`;
     if (w > 4) return `<span class="day off">${num}</span>`;
     const k = c < 7 ? w : w + 5;
-    return `<div class="day" style="--k:${k}">${num}<span class="pill heat h0" data-k="${k}"><small class="intro-m">soir</small><b>0</b></span></div>`;
+    return `<div class="day" style="--k:${k}">${num}<span class="pill heat h0" data-k="${k}"><i class="intro-m"></i><b>0</b></span></div>`;
   }).join('');
   return `<div class="intro-head"><span class="intro-ic">🧀</span><div class="intro-name"><b class="intro-title"></b><small class="intro-sub">Nouveau sondage</small></div></div>
     <div class="intro-tools" data-s="formules">
       <div class="intro-formules"><span class="chip sm">Tous les soirs</span><span class="chip sm intro-pick">En semaine</span><span class="chip sm">Week-end</span></div>
-      <div class="intro-people">${INTRO_PEOPLE.map(([n]) => avatarHTML(n, ' intro-av')).join('')}<span class="intro-count"></span></div>
+      <div class="intro-people">${INTRO_PEOPLE.map(([n]) => avatarHTML(n, ' intro-av')).join('')}</div>
     </div>
     <div class="cal intro-cal" style="--cols:7">${WD.map((w) => `<span class="cal-wd">${w}</span>`).join('')}${cells}</div>
     <div class="intro-foot" data-s="cta">
       <span class="btn primary intro-cta">Créer le sondage${icon('right', 16)}</span>
-      <span class="intro-live"><i></i>Les réponses s’affichent en direct</span>
-      <span class="intro-best"><span><small class="v-label"><span class="if-off">En tête · ${INTRO_PEOPLE.length} sur ${INTRO_PEOPLE.length}</span><span class="if-on">C’est calé&nbsp;! 🎉</span></small><b>${esc(slotLong({ d: mon + INTRO_BEST, t: 4 }))}</b></span><span class="intro-choose"><span class="if-off">Choisir</span><span class="if-on">${icon('check', 16)}</span></span></span>
+      <span class="intro-live"><i></i>En direct</span>
+      <span class="intro-best"><span><small class="v-label"><span class="if-off">${INTRO_PEOPLE.length} sur ${INTRO_PEOPLE.length}</span><span class="if-on">C’est calé&nbsp;! 🎉</span></small><b>${esc(slotLong({ d: mon + INTRO_BEST, t: 4 }))}</b></span><span class="intro-choose"><span class="if-off">Choisir</span><span class="if-on">${icon('check', 16)}</span></span></span>
     </div>
     <div class="intro-sheet">
-      <b class="intro-sheet-h">C’est prêt. Envoyez le lien au groupe.</b>
       <div class="intro-link"><span class="intro-url">${esc(location.host)}/s/k7m2pq4xna</span><span class="btn sm primary intro-copy">${icon('copy', 15)}<span class="if-off">Copier</span><span class="if-on">Copié</span></span></div>
       <div class="intro-chat">
         <span class="intro-chat-h">Les copains</span>
-        <div class="intro-msg me"><span class="intro-prev">${BRAND_MARK}<span><b>${esc(INTRO_TITLE)}</b><small>${esc(SITE_NAME)} · vos dispos en dix secondes</small></span></span>On se la fait quand&nbsp;? 🧀</div>
-        <div class="intro-msg m1"><b>Karim</b>Chaud&nbsp;! Je réponds 🔥</div>
-        <div class="intro-msg m2"><b>Sophie</b>C’est fait 👍</div>
+        <div class="intro-msg me"><span class="intro-prev">${BRAND_MARK}<span><b>${esc(INTRO_TITLE)}</b><small>${esc(SITE_NAME)}</small></span></span>On se la fait quand&nbsp;? 🧀</div>
+        <div class="intro-msg m1"><b>Karim</b>Chaud&nbsp;! 🔥</div>
+        <div class="intro-msg m2"><b>Sophie</b>👍</div>
       </div>
     </div>
     <span class="intro-finger"></span>`;
@@ -568,8 +556,7 @@ function iAnswers(n, now) {
     if (!now && n && INTRO_PEOPLE[n - 1][1][k] !== '0') { void p.offsetWidth; p.classList.add('bump'); }
   });
   intro.root.querySelectorAll('.intro-av').forEach((a, k) => a.classList.toggle('in', k < n));
-  iq('.intro-count').textContent = n ? `${INTRO_PEOPLE[n - 1][0]} a répondu` : 'En attente des réponses';
-  iq('.intro-sub').textContent = n ? plural(n, 'réponse') : 'Aucune réponse pour l’instant';
+  iq('.intro-sub').textContent = n ? plural(n, 'réponse') : 'En attente des réponses';
 }
 const INTRO_SCRIPT = [
   [ // 1. Les créneaux
@@ -578,18 +565,18 @@ const INTRO_SCRIPT = [
     [2100, (now) => {
       const mon = introMonday();
       iTap(now); iset('.intro-pick', 'on'); iset('.intro-cal', 'open');
-      iq('.intro-sub').textContent = `10 soirs proposés · ${fmt(fDM, mon)} → ${fmt(fDM, mon + 11)}`;
+      iq('.intro-sub').textContent = `${fmt(fDM, mon)} → ${fmt(fDM, mon + 11)}`;
     }],
     [3500, (now) => iPoint('.intro-cta', now)],
     [4100, (now) => { iTap(now); iset('.intro-cta', 'on'); }],
   ],
   [ // 2. Le lien
     [0, () => { iHide(); iset('.intro-sheet', 'in'); }],
-    [1000, (now) => iPoint('.intro-copy', now)],
-    [1600, (now) => { iTap(now); iset('.intro-copy', 'on'); }],
-    [2200, () => { iHide(); iset('.intro-msg.me', 'in'); }],
-    [3100, () => iset('.intro-msg.m1', 'in')],
-    [3800, () => iset('.intro-msg.m2', 'in')],
+    [700, (now) => iPoint('.intro-copy', now)],
+    [1200, (now) => { iTap(now); iset('.intro-copy', 'on'); }],
+    [1600, () => { iHide(); iset('.intro-msg.me', 'in'); }],
+    [2500, () => iset('.intro-msg.m1', 'in')],
+    [3200, () => iset('.intro-msg.m2', 'in')],
   ],
   [ // 3. Les dispos
     [0, (now) => {
@@ -602,12 +589,11 @@ const INTRO_SCRIPT = [
   [ // 4. La date
     [300, () => {
       iset('.intro-cal', 'done'); iset(`.intro-cal .pill[data-k="${INTRO_BEST}"]`, 'best');
-      iq('.intro-foot').dataset.s = 'best'; iq('.intro-count').textContent = 'Tout le monde a répondu';
+      iq('.intro-foot').dataset.s = 'best';
     }],
     [1700, (now) => iPoint('.intro-choose', now)],
     [2300, (now) => {
       iTap(now); iset('.intro-best', 'on'); iset(`.intro-cal .pill[data-k="${INTRO_BEST}"]`, 'final');
-      iq('.intro-sub').textContent = 'Date choisie · à vos agendas\u00a0!';
     }],
     [3100, () => iHide()],
   ],
