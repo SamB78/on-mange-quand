@@ -18,7 +18,7 @@ L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux
 
 ### Comptes
 
-Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à garder la main sur ses sondages, à protéger ses réponses et à tout retrouver sur ses appareils. La page « Confidentialité » explique ce qui est conservé, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
+Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authentication. Le compte est facultatif : il sert à garder la main sur ses sondages, à protéger ses réponses et à tout retrouver sur ses appareils. La page « Confidentialité » explique ce qui est conservé et combien de temps, « Mentions légales » donne l'hébergeur et le contact, et « Supprimer mon compte » détache le compte de ses sondages avant de l'effacer.
 
 ### Qui peut faire quoi
 
@@ -33,6 +33,10 @@ Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authen
 | Ajouter, changer ou retirer le code d'accès | personne | l'organisateur |
 
 Sans compte, tout le monde est à égalité : c'est simple et rien ne se perd en changeant d'appareil ou de navigateur. Pour garder la main, il suffit de se connecter et de **rattacher le sondage à son compte** (bloc « Organisation ») : on en devient le seul organisateur. Comme toute personne connectée peut le faire tant que le sondage n'a pas d'organisateur, la page demande confirmation. Un sondage clôturé, ou dont la date limite est passée, ne prend plus de réponses : sans organisateur, n'importe qui peut le rouvrir ou repousser la date.
+
+### Corbeille et conservation
+
+Supprimer un sondage le met à la corbeille : son lien affiche « Sondage supprimé », et qui le gère peut le restaurer pendant 30 jours. Chaque nuit, une tâche programmée efface pour de bon les sondages restés plus de 30 jours dans la corbeille, et ceux dont la dernière date proposée est passée depuis 6 mois sans modification depuis, avec leurs réponses. Les deux durées sont dans `public/shared.js` (`TRASH_DAYS`, `KEEP_MONTHS`).
 
 ### Code d'accès
 
@@ -53,6 +57,7 @@ Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perd
 | `public/shared.js` | Les règles des créneaux, lues par la page **et** par le serveur |
 | `public/firebase.js` | Le branchement de la connexion Firebase |
 | `src/worker.js` | Le serveur : l'API (`/api/polls`, `/api/me`) et l'aperçu des liens |
+| `public/fonts/` | Les polices (Bricolage Grotesque, Instrument Sans, licence OFL), servies par le site |
 | `src/auth.js` | Vérification des jetons de connexion Firebase |
 | `tests/` | Tests (`npm test`) |
 | `firebase.json` | Réglages de l'émulateur de connexion local |
@@ -80,7 +85,7 @@ npm run auth:local    # dans un premier terminal : émulateur de connexion Fireb
 npm run dev           # dans un second terminal
 ```
 
-La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests (vérification des connexions, règles des créneaux).
+La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests (vérification des connexions, règles des créneaux, en-têtes de sécurité).
 
 ## Brancher Firebase
 

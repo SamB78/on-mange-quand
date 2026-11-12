@@ -10,8 +10,10 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 - Les sondages créés avant la refonte étaient des essais : pas de compatibilité à préserver pour eux (c'est pour cela que « Journée » est aussi imposée par le serveur).
 - Reste à essayer sur la version de test avec un vrai compte, car impossible en local : la connexion Google et la comparaison avec Google Agenda (hachures et rappel au clic).
 - Sondages créés sans compte : la clé d'organisation liée à l'appareil a été retirée, toute personne qui a le lien les gère (choix de novembre 2026 : la clé se perdait trop facilement, et le compte reste le moyen de garder la main). La colonne `polls.admin_key` reste en base, plus lue ni écrite.
+- Passage en prod essayé le 12 novembre 2026 sur une copie de la base prod (1 sondage, 4 réponses) : migrations 0002 à 0006 sans erreur, mêmes créneaux qu'avant, réponses intactes, anciens liens `/#…` renvoyés. La migration 0007 (corbeille) a été ajoutée depuis : une colonne seulement.
 - Le projet s'appelait « On mange quand ? » et s'appelle maintenant **Dispos** ; domaine visé `dispos.day`, pas encore acheté ni branché sur le worker.
-- Pistes notées, non faites : héberger les polices dans `public/` (elles viennent de Google Fonts alors que le pied de page dit « sans pistage ») ; tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
+- Avant la prod, côté utilisateur : créer l'adresse `contact@dispos.day` (affichée par les mentions légales et la confidentialité, `CONTACT` dans `app.js`), et vérifier que le compte Cloudflare porte l'identité de l'éditeur (condition pour rester anonyme dans les mentions légales).
+- Pistes notées, non faites : tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
 
 ## Environnements : ne jamais toucher la prod sans demande explicite
 
@@ -29,7 +31,7 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 
 ## Tester en local
 
-`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons et les règles partagées. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
+`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons, les règles partagées et les en-têtes de sécurité. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
 
 ## Code
 
@@ -37,9 +39,12 @@ Aucune dépendance ni étape de build : `public/` est servi tel quel.
 
 - `public/index.html` : la coquille (barre du haut, pied de page). `public/app.css` : les styles, couleurs en jetons CSS, thèmes clair et sombre. `public/app.js` : toute la page (accueil, création en 3 étapes, sondage, compte). `public/firebase.js` : branchement de Firebase Authentication.
 - `public/shared.js` : les règles communes, importées **par la page et par le serveur** (ordre des moments, `MOMENT_HOURS`, `buildSlots`, `slotsKey`, date limite, noms affichés `SITE_NAME`, `FEED_NAME`, `DEFAULT_TITLE`). Ne jamais en recopier un morceau d'un côté ou de l'autre.
-- `src/worker.js` : l'API `/api/polls` et `/api/me` (routes listées en tête du fichier) ; rend aussi la page pour toute adresse sans extension (`/`, `/nouveau`, `/s/<id>`, `/compte`, `/confidentialite`, `/exemple`) et, pour `/s/<id>`, glisse le nom du sondage dans l'aperçu du lien (jamais s'il a un code).
+- `src/worker.js` : l'API `/api/polls` et `/api/me` (routes listées en tête du fichier) ; rend aussi la page pour toute adresse sans extension (`/`, `/nouveau`, `/s/<id>`, `/compte`, `/confidentialite`, `/mentions-legales`, `/exemple`) et, pour `/s/<id>`, glisse le nom du sondage dans l'aperçu du lien (jamais s'il a un code).
 - `src/auth.js` : vérification des jetons Firebase (signature Google, projet, expiration). Les jetons non signés de l'émulateur ne sont acceptés qu'en local avec `AUTH_EMULATOR_LOCAL_ONLY=1`, que seul `npm run dev` fournit.
 - `migrations/` : une migration par changement de base, jamais modifiée une fois appliquée en prod.
+- Corbeille et effacement : `DELETE /api/polls/:id` ne fait que poser `polls.deleted_at`. Un sondage supprimé répond 410 `{ deleted, canRestore, until }` à toute route, sauf `POST /api/polls/:id/restore` pour qui le gère ; il disparaît des listes du compte et du lien d'agenda. Chaque nuit (`triggers.crons`, `purge()` du serveur), la corbeille de plus de `TRASH_DAYS` jours et les sondages dont la date de fin `e` est passée depuis `KEEP_MONTHS` mois sans modification depuis sont effacés, réponses comprises. Les deux durées sont dans `shared.js`, la page les affiche. En local : `wrangler dev --test-scheduled`, puis ouvrir `/__scheduled`.
+- Limite de débit : liaisons `LIMIT_WRITE` (60 écritures par minute et par IP) et `LIMIT_CREATE` (10 créations de sondage par minute) dans `wrangler.jsonc`, répétées sous `env.test` avec leurs propres `namespace_id`. `tooFast` laisse passer si la liaison manque. Les lectures ne sont pas limitées.
+- Sécurité : la politique de contenu (CSP) est une balise meta de `public/index.html` ; aucun script en ligne (le thème est posé par `public/theme.js`). Toute nouvelle ressource externe (script, connexion, iframe) doit y être ajoutée. Les autres en-têtes sont dans `public/_headers` (fichiers servis tels quels) et `SECURITY_HEADERS` du serveur, à garder identiques (`npm test` le vérifie).
 
 Ancien nom : les identifiants techniques gardent « on-mange-quand » / « omq ». Ne pas les renommer, ce qui circule déjà cesserait de marcher : mémoire du navigateur `on-mange-quand:…`, préfixe des empreintes de codes, cookie `omq_pin_`, UID des événements d'agenda. Le worker, les bases D1, le projet Firebase, le dépôt et `package.json` gardent aussi l'ancien nom (changer le worker changerait l'adresse de la prod).
 

@@ -9,7 +9,8 @@
 //   PUT    /api/polls/:id                 modifier les réglages (qui gère le sondage)
 //   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (qui gère le sondage)
 //   POST   /api/polls/:id/claim           devenir l'organisateur d'un sondage qui n'en a pas (toute personne connectée)
-//   DELETE /api/polls/:id                 supprimer le sondage (qui gère le sondage)
+//   DELETE /api/polls/:id                 mettre le sondage à la corbeille, 30 jours (qui gère le sondage)
+//   POST   /api/polls/:id/restore         sortir le sondage de la corbeille (qui gère le sondage)
 //   GET    /api/polls/:id/evenement.ics   le créneau choisi, à ajouter dans un agenda
 //   GET    /api/me/polls                  les sondages du compte connecté
 //   GET    /api/me/agenda                 le lien d'agenda personnel du compte ({ url } ou { url: null })
@@ -18,7 +19,7 @@
 //   DELETE /api/me                        détacher le compte de ses sondages et réponses (avant sa suppression)
 //   GET    /api/agenda/:token.ics         le lien d'agenda : les dates choisies du compte (sans connexion, le jeton suffit)
 //
-// Toute autre adresse sans extension (/, /nouveau, /s/:id, /compte…) rend la page ; pour /s/:id, le titre du sondage
+// Toute autre adresse sans extension (/, /nouveau, /s/:id, /compte, /mentions-legales…) rend la page ; pour /s/:id, le titre du sondage
 // est glissé dans l'aperçu du lien (sauf s'il est protégé par un code).
 //
 // Connexion : en-tête « Authorization: Bearer <jeton Firebase> », vérifié dans src/auth.js.
@@ -26,6 +27,7 @@
 import { verifyIdToken } from './auth.js';
 import {
   DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
+  TRASH_DAYS, KEEP_MONTHS,
   norm, weekday, parseYmd, ymd, buildSlots, slotsKey, isLate,
 } from '../public/shared.js';
 
@@ -44,6 +46,21 @@ class HttpError extends Error {
     this.status = status;
     this.extra = extra;
   }
+}
+
+// En-têtes de sécurité de toutes les réponses du serveur. Les fichiers servis tels quels reçoivent les mêmes
+// depuis public/_headers : garder les deux listes identiques (npm test le vérifie). La CSP est dans index.html.
+export const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Strict-Transport-Security': 'max-age=31536000',
+};
+function secured(res) {
+  const out = new Response(res.body, res);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) out.headers.set(name, value);
+  return out;
 }
 
 const json = (data, status = 200) =>
@@ -219,7 +236,7 @@ async function currentUser(request, env, url) {
 }
 
 async function loadPoll(env, id) {
-  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin FROM polls WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT id, config, final_idx, owner_uid, closed, pin, deleted_at FROM polls WHERE id = ?').bind(id).first();
   if (!row) throw new HttpError(404, 'Ce sondage n’existe pas ou a été supprimé.');
   return row;
 }
@@ -347,7 +364,7 @@ async function accountPolls(env, uid) {
             (SELECT COUNT(*) FROM answers a WHERE a.poll_id = p.id) AS answers,
             (SELECT GROUP_CONCAT(a.ans) FROM answers a WHERE a.poll_id = p.id AND a.uid = ?1) AS mine
        FROM polls p
-      WHERE p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1)
+      WHERE p.deleted_at IS NULL AND (p.owner_uid = ?1 OR p.id IN (SELECT poll_id FROM answers WHERE uid = ?1))
       ORDER BY p.updated_at DESC
       LIMIT 100`
   ).bind(uid).all();
@@ -429,9 +446,27 @@ async function handleFeed(request, env, url, parts) {
   });
 }
 
+// Limite de débit, par adresse IP : approximative (comptée par emplacement Cloudflare), elle freine les scripts
+// sans jamais gêner un groupe normal. Seules les écritures sont comptées. Sans la liaison (wrangler.jsonc), pas de limite.
+async function tooFast(env, name, request) {
+  const limiter = env[name];
+  if (!limiter) return false;
+  try {
+    const { success } = await limiter.limit({ key: request.headers.get('cf-connecting-ip') || 'local' });
+    return !success;
+  } catch (e) {
+    return false; // limiteur indisponible : on laisse passer plutôt que de bloquer tout le monde
+  }
+}
+const TOO_FAST = 'Trop de demandes en peu de temps : patientez une minute, puis réessayez.';
+
 async function handleApi(request, env, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me' | 'agenda', ...]
   const method = request.method;
+  if (method !== 'GET' && method !== 'HEAD') {
+    if (await tooFast(env, 'LIMIT_WRITE', request)) throw new HttpError(429, TOO_FAST);
+    if (parts[1] === 'polls' && parts.length === 2 && await tooFast(env, 'LIMIT_CREATE', request)) throw new HttpError(429, TOO_FAST);
+  }
   if (parts[1] === 'me') return handleMe(request, env, url, parts);
   if (parts[1] === 'agenda') return handleFeed(request, env, url, parts);
   if (parts[1] !== 'polls' || parts.length > 4) throw new HttpError(404, 'Adresse inconnue.');
@@ -461,6 +496,16 @@ async function handleApi(request, env, url) {
   const action = parts[3] || '';
   const now = Date.now();
   const reply = (r, status) => pollJson(env, request, url, r, acc, status);
+
+  // Sondage dans la corbeille : rien n'est lisible ni modifiable ; qui le gère peut le restaurer pendant TRASH_DAYS jours.
+  if (row.deleted_at) {
+    if (action === 'restore' && method === 'POST' && acc.manage) {
+      await env.DB.prepare('UPDATE polls SET deleted_at = NULL, updated_at = ? WHERE id = ?').bind(now, id).run();
+      return reply({ ...row, deleted_at: null });
+    }
+    throw new HttpError(410, 'Ce sondage a été supprimé.', { deleted: true, canRestore: acc.manage, until: row.deleted_at + TRASH_DAYS * DAY_MS });
+  }
+  if (action === 'restore') throw new HttpError(409, 'Ce sondage n’est pas dans la corbeille.');
 
   if (action === 'pin') {
     if (method !== 'POST') throw new HttpError(405, 'Méthode non autorisée.');
@@ -509,12 +554,9 @@ async function handleApi(request, env, url) {
 
     if (method === 'DELETE') {
       manageOnly('supprimer le sondage');
-      await env.DB.batch([
-        env.DB.prepare('DELETE FROM answers WHERE poll_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM pin_tries WHERE poll_id = ?').bind(id),
-        env.DB.prepare('DELETE FROM polls WHERE id = ?').bind(id),
-      ]);
-      return json({ deleted: true });
+      // À la corbeille seulement : la tâche programmée l'effacera pour de bon après TRASH_DAYS jours.
+      await env.DB.prepare('UPDATE polls SET deleted_at = ?, updated_at = ? WHERE id = ?').bind(now, now, id).run();
+      return json({ deleted: true, canRestore: true, until: now + TRASH_DAYS * DAY_MS });
     }
     throw new HttpError(405, 'Méthode non autorisée.');
   }
@@ -619,14 +661,30 @@ async function handleApi(request, env, url) {
 /* ---------- La page ---------- */
 // Toutes les adresses de l'app rendent la même page ; elle lit l'adresse et affiche la bonne vue.
 // Pour un sondage, on glisse son nom dans l'aperçu du lien (WhatsApp, iMessage…), sauf s'il est protégé par un code.
+async function route(request, env) {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/api/')) {
+    try {
+      return await handleApi(request, env, url);
+    } catch (err) {
+      if (err instanceof HttpError) return json({ ...err.extra, error: err.message }, err.status);
+      console.error(err);
+      return json({ error: 'Le serveur a rencontré un problème. Réessayez dans un instant.' }, 500);
+    }
+  }
+  const last = url.pathname.split('/').pop();
+  if ((request.method === 'GET' || request.method === 'HEAD') && !last.includes('.')) return servePage(request, env, url);
+  return env.ASSETS.fetch(request);
+}
+
 async function servePage(request, env, url) {
   const res = await env.ASSETS.fetch(new Request(new URL('/', url), { method: 'GET' }));
   const match = /^\/s\/([a-z2-7]{10})\/?$/.exec(url.pathname);
   if (!match || res.status !== 200) return res;
   let title = '';
   try {
-    const row = await env.DB.prepare('SELECT config, pin FROM polls WHERE id = ?').bind(match[1]).first();
-    if (row && !row.pin) title = JSON.parse(row.config).t || '';
+    const row = await env.DB.prepare('SELECT config, pin, deleted_at FROM polls WHERE id = ?').bind(match[1]).first();
+    if (row && !row.pin && !row.deleted_at) title = JSON.parse(row.config).t || '';
   } catch (e) {
     // base indisponible : la page s'affiche quand même, avec son aperçu habituel
   }
@@ -645,20 +703,29 @@ async function servePage(request, env, url) {
   return out;
 }
 
+// Effacement automatique (tâche programmée, wrangler.jsonc) : corbeille de plus de TRASH_DAYS jours, et sondages
+// dont la dernière date proposée (e) est passée depuis KEEP_MONTHS mois sans modification depuis. Réponses comprises.
+export async function purge(env, now = Date.now()) {
+  const cutoff = new Date(now);
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - KEEP_MONTHS);
+  const where = `(deleted_at IS NOT NULL AND deleted_at < ?1)
+              OR (json_extract(config, '$.e') < ?2 AND updated_at < ?3)`;
+  const args = [now - TRASH_DAYS * DAY_MS, ymd(Math.floor(cutoff.getTime() / DAY_MS)), cutoff.getTime()];
+  const [answers, tries, polls] = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM answers WHERE poll_id IN (SELECT id FROM polls WHERE ${where})`).bind(...args),
+    env.DB.prepare(`DELETE FROM pin_tries WHERE poll_id IN (SELECT id FROM polls WHERE ${where})`).bind(...args),
+    env.DB.prepare(`DELETE FROM polls WHERE ${where}`).bind(...args),
+  ]);
+  const done = { polls: polls.meta.changes, answers: answers.meta.changes, pinTries: tries.meta.changes };
+  console.log('Effacement automatique', JSON.stringify(done));
+  return done;
+}
+
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/')) {
-      try {
-        return await handleApi(request, env, url);
-      } catch (err) {
-        if (err instanceof HttpError) return json({ ...err.extra, error: err.message }, err.status);
-        console.error(err);
-        return json({ error: 'Le serveur a rencontré un problème. Réessayez dans un instant.' }, 500);
-      }
-    }
-    const last = url.pathname.split('/').pop();
-    if ((request.method === 'GET' || request.method === 'HEAD') && !last.includes('.')) return servePage(request, env, url);
-    return env.ASSETS.fetch(request);
+    return secured(await route(request, env));
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(purge(env));
   },
 };
