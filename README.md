@@ -2,8 +2,10 @@
 
 Sondage de dispos pour fixer la date d'un dîner, d'une soirée jeux ou d'un week-end entre amis. Tout fonctionne sans compte ; un compte, facultatif, donne les droits d'organisateur.
 
-- **Prod : https://on-mange-quand.on-mange-quand.workers.dev**
-- **Test : https://on-mange-quand-test.on-mange-quand.workers.dev** (sa propre base, pour essayer les nouveautés)
+- **Prod : https://dispos.day**
+- **Test : https://test.dispos.day** (sa propre base, pour essayer les nouveautés)
+
+Les anciennes adresses `on-mange-quand.on-mange-quand.workers.dev` (prod) et `on-mange-quand-test.on-mange-quand.workers.dev` (test), ainsi que `www.dispos.day`, renvoient les pages vers ces adresses ; l'API y répond encore, pour les liens d'agenda déjà ajoutés.
 
 ## Comment ça marche
 
@@ -89,7 +91,7 @@ La page s'ouvre sur http://localhost:8787 avec une base de données locale. En l
 
 ## Brancher Firebase
 
-Le projet Firebase se renseigne à deux endroits : `CONFIG` dans `public/firebase.js` (valeurs publiques du bloc `firebaseConfig`) et `FIREBASE_PROJECT_ID` dans `wrangler.jsonc` (prod et test). Tant qu'ils sont vides, l'app fonctionne sans comptes. Chaque adresse du site doit figurer dans les « Domaines autorisés » de Firebase Authentication.
+Le projet Firebase se renseigne à deux endroits : `CONFIG` dans `public/firebase.js` (valeurs publiques du bloc `firebaseConfig`) et `FIREBASE_PROJECT_ID` dans `wrangler.jsonc` (prod et test). Tant qu'ils sont vides, l'app fonctionne sans comptes. Chaque adresse du site (`dispos.day`, `test.dispos.day`) doit figurer dans les « Domaines autorisés » de Firebase Authentication.
 
 ## Brancher l'agenda Google
 
@@ -97,7 +99,7 @@ Le bouton « Comparer avec mon agenda Google » utilise un client OAuth à part,
 
 1. **API et services → Bibliothèque** : **Google Calendar API** activée.
 2. **Google Auth Platform → Accès aux données** : niveau d'accès `https://www.googleapis.com/auth/calendar.freebusy` (lecture des disponibilités seulement). Google le range parmi les accès non sensibles : pas d'écran « application non validée », pas de limite de 100 personnes.
-3. **Google Auth Platform → Clients → Client Web 2 → Origines JavaScript autorisées** : `https://on-mange-quand-test.on-mange-quand.workers.dev`, `https://on-mange-quand.on-mange-quand.workers.dev` et `http://localhost:8787`.
+3. **Google Auth Platform → Clients → Client Web 2 → Origines JavaScript autorisées** : `https://dispos.day`, `https://test.dispos.day` et `http://localhost:8787`.
 
 ## Mettre en ligne la version de test
 

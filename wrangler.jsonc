@@ -18,12 +18,19 @@
   // Chaque nuit à 3 h (UTC) : effacement automatique, voir purge() dans src/worker.js.
   "triggers": { "crons": ["0 3 * * *"] },
   // Projet Firebase des comptes (vide = comptes désactivés). En local, « npm run dev » utilise l'émulateur.
-  "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a" },
+  // SITE_HOST : l'adresse publique ; les pages demandées sur workers.dev ou www y sont renvoyées (canonicalUrl).
+  "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a", "SITE_HOST": "dispos.day" },
+  // Domaine acheté chez Cloudflare : le déploiement crée lui-même les enregistrements DNS et les certificats.
+  "routes": [
+    { "pattern": "dispos.day", "custom_domain": true },
+    { "pattern": "www.dispos.day", "custom_domain": true }
+  ],
   "env": {
     // Version de test (--env test) : sa propre adresse et sa propre base, séparées de la prod.
     "test": {
       "name": "on-mange-quand-test",
-      "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a" },
+      "vars": { "FIREBASE_PROJECT_ID": "on-mange-quand-5a00a", "SITE_HOST": "test.dispos.day" },
+      "routes": [{ "pattern": "test.dispos.day", "custom_domain": true }],
       "triggers": { "crons": ["0 3 * * *"] },
       "d1_databases": [
         {

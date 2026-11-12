@@ -11,7 +11,7 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 - Reste à essayer sur la version de test avec un vrai compte, car impossible en local : la connexion Google et la comparaison avec Google Agenda (hachures et rappel au clic).
 - Sondages créés sans compte : la clé d'organisation liée à l'appareil a été retirée, toute personne qui a le lien les gère (choix de novembre 2026 : la clé se perdait trop facilement, et le compte reste le moyen de garder la main). La colonne `polls.admin_key` reste en base, plus lue ni écrite.
 - Passage en prod essayé le 12 novembre 2026 sur une copie de la base prod (1 sondage, 4 réponses) : migrations 0002 à 0006 sans erreur, mêmes créneaux qu'avant, réponses intactes, anciens liens `/#…` renvoyés. La migration 0007 (corbeille) a été ajoutée depuis : une colonne seulement.
-- Le projet s'appelait « On mange quand ? » et s'appelle maintenant **Dispos** ; domaine visé `dispos.day`, pas encore acheté ni branché sur le worker.
+- Le projet s'appelait « On mange quand ? » et s'appelle maintenant **Dispos**. Domaine `dispos.day` acheté chez Cloudflare le 12 novembre 2026, branché par `routes` dans `wrangler.jsonc` (`dispos.day` et `www` pour la prod, `test.dispos.day` pour le test). `SITE_HOST` fixe l'adresse publique : les pages demandées sur `workers.dev` ou `www` y sont renvoyées (`canonicalUrl`), pas l'API.
 - Avant la prod, côté utilisateur : créer l'adresse `contact@dispos.day` (affichée par les mentions légales et la confidentialité, `CONTACT` dans `app.js`), et vérifier que le compte Cloudflare porte l'identité de l'éditeur (condition pour rester anonyme dans les mentions légales).
 - Pistes notées, non faites : tests automatiques de l'API et de la page (`npm test` ne couvre que les jetons et `shared.js`) ; décider si `.claude/launch.json` (serveurs locaux `dev` et `auth-local` pour l'aperçu) entre dans le dépôt.
 
@@ -19,15 +19,15 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 
 | | Branche | Adresse | Base D1 |
 |---|---|---|---|
-| Prod | `main` | https://on-mange-quand.on-mange-quand.workers.dev | `on-mange-quand` |
-| Test | `develop` | https://on-mange-quand-test.on-mange-quand.workers.dev | `on-mange-quand-test` |
+| Prod | `main` | https://dispos.day | `on-mange-quand` |
+| Test | `develop` | https://test.dispos.day | `on-mange-quand-test` |
 
 - La prod est utilisée par de vrais groupes. On ne déploie pas en prod, on ne modifie pas sa base et on ne pousse pas sur `main` sans que l'utilisateur le demande clairement.
 - Chaque nouveauté part de `develop` sur une branche `feature/…`, revient dans `develop`, puis s'essaie sur la version de test.
 - Passer en prod : fusionner `develop` dans `main`, puis `npm run db:remote` **avant** `npm run deploy`, car le nouveau code lit des colonnes qui doivent déjà exister.
 - `npm run deploy` et `npm run db:remote` passent par `scripts/garde-fou-prod.mjs` : ils refusent hors de `main` ou avec des modifications non commitées. Ne jamais contourner avec `npx wrangler deploy`.
 - Version de test : `npm run db:test`, puis `npm run deploy:test`. Toute commande wrangler visant le test porte `--env test`.
-- GitHub Pages sert `docs/` depuis `main` (ancienne adresse : renvoi vers la prod, plus l'ancienne version où le sondage tient dans le lien).
+- GitHub Pages sert `docs/` depuis `main` (ancienne adresse : renvoi vers `dispos.day`, plus l'ancienne version où le sondage tient dans le lien).
 
 ## Tester en local
 

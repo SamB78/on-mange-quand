@@ -678,8 +678,21 @@ async function handleApi(request, env, url) {
 /* ---------- La page ---------- */
 // Toutes les adresses de l'app rendent la même page ; elle lit l'adresse et affiche la bonne vue.
 // Pour un sondage, on glisse son nom dans l'aperçu du lien (WhatsApp, iMessage…), sauf s'il est protégé par un code.
+// Une seule adresse publique (SITE_HOST, dans wrangler.jsonc) : les pages demandées sur workers.dev ou www y sont renvoyées,
+// chemin compris (les anciens liens /#<id> gardent leur fin, que le navigateur reporte). L'API répond partout, pour ne pas
+// casser un lien d'agenda déjà ajouté ni une page restée ouverte. En local, SITE_HOST est absent : rien n'est renvoyé.
+export function canonicalUrl(request, env) {
+  if (!env.SITE_HOST || (request.method !== 'GET' && request.method !== 'HEAD')) return null;
+  const url = new URL(request.url);
+  if (url.hostname === env.SITE_HOST || url.pathname.startsWith('/api/')) return null;
+  if (!url.hostname.endsWith('.workers.dev') && url.hostname !== 'www.' + env.SITE_HOST) return null;
+  return `https://${env.SITE_HOST}${url.pathname}${url.search}`;
+}
+
 async function route(request, env) {
   const url = new URL(request.url);
+  const canonical = canonicalUrl(request, env);
+  if (canonical) return Response.redirect(canonical, 301);
   if (url.pathname.startsWith('/api/')) {
     try {
       return await handleApi(request, env, url);
