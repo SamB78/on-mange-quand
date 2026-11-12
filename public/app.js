@@ -732,7 +732,7 @@ function paintDay(focusSel) {
       `<button type="button" class="chip" data-act="day-t" data-t="${t}" aria-pressed="${!!(r & (1 << t))}">${label}</button>`).join('')}</div>
     <p class="hint" aria-live="polite">${state}</p>
     <div class="dlg-actions">
-      ${r ? '<button type="button" class="btn sm quiet" data-act="day-none">Aucun créneau</button>' : ''}
+      ${r ? '<button type="button" class="btn sm quiet" data-act="day-none">Supprimer le jour</button>' : ''}
       ${r !== rule ? '<button type="button" class="btn sm quiet" data-act="day-reset">Revenir à la règle</button>' : ''}
       <button type="button" class="btn sm primary" data-act="day-close">OK</button>
     </div>`;
@@ -2148,7 +2148,7 @@ document.addEventListener('click', (ev) => {
     case 'cell': draft.m[+el.dataset.w] = toggleBit(draft.m[+el.dataset.w], +el.dataset.t); paintCreate(); refocus(); break;
     case 'day': openDay(+el.dataset.d); break;
     case 'day-t': changeDay(toggleBit(draftRule(dayOpen), +el.dataset.t), `[data-act="day-t"][data-t="${el.dataset.t}"]`); break;
-    case 'day-none': changeDay(0); break;
+    case 'day-none': setDay(dayOpen, 0); paintCreate(); dayDlg.close(); break; // on retire le jour et on referme
     case 'day-reset': changeDay(draft.m[weekday(dayOpen)]); break;
     case 'day-close': dayDlg.close(); break;
     case 'add-hols': {
