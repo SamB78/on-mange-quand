@@ -444,9 +444,27 @@ async function handleFeed(request, env, url, parts) {
   });
 }
 
+// Limite de débit, par adresse IP : approximative (comptée par emplacement Cloudflare), elle freine les scripts
+// sans jamais gêner un groupe normal. Seules les écritures sont comptées. Sans la liaison (wrangler.jsonc), pas de limite.
+async function tooFast(env, name, request) {
+  const limiter = env[name];
+  if (!limiter) return false;
+  try {
+    const { success } = await limiter.limit({ key: request.headers.get('cf-connecting-ip') || 'local' });
+    return !success;
+  } catch (e) {
+    return false; // limiteur indisponible : on laisse passer plutôt que de bloquer tout le monde
+  }
+}
+const TOO_FAST = 'Trop de demandes en peu de temps : patientez une minute, puis réessayez.';
+
 async function handleApi(request, env, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me' | 'agenda', ...]
   const method = request.method;
+  if (method !== 'GET' && method !== 'HEAD') {
+    if (await tooFast(env, 'LIMIT_WRITE', request)) throw new HttpError(429, TOO_FAST);
+    if (parts[1] === 'polls' && parts.length === 2 && await tooFast(env, 'LIMIT_CREATE', request)) throw new HttpError(429, TOO_FAST);
+  }
   if (parts[1] === 'me') return handleMe(request, env, url, parts);
   if (parts[1] === 'agenda') return handleFeed(request, env, url, parts);
   if (parts[1] !== 'polls' || parts.length > 4) throw new HttpError(404, 'Adresse inconnue.');
