@@ -696,18 +696,23 @@ async function route(request, env) {
 
 async function servePage(request, env, url) {
   const res = await env.ASSETS.fetch(new Request(new URL('/', url), { method: 'GET' }));
-  const match = /^\/s\/([a-z2-7]{10})\/?$/.exec(url.pathname);
-  if (!match || res.status !== 200) return res;
-  let title = '';
-  try {
-    const row = await env.DB.prepare('SELECT config, pin, deleted_at FROM polls WHERE id = ?').bind(match[1]).first();
-    if (row && !row.pin && !row.deleted_at) title = JSON.parse(row.config).t || '';
-  } catch (e) {
-    // base indisponible : la page s'affiche quand même, avec son aperçu habituel
-  }
+  if (res.status !== 200) return res;
+  // Les messageries veulent l'adresse complète de l'image d'aperçu ; elle dépend du domaine (prod, test, local).
+  // C'est pour cela que l'accueil « / » passe aussi par le serveur (run_worker_first dans wrangler.jsonc).
   let rewriter = new HTMLRewriter()
+    .on('meta[property="og:image"]', { element(el) { el.setAttribute('content', new URL(el.getAttribute('content'), url).href); } });
+  const match = /^\/s\/([a-z2-7]{10})\/?$/.exec(url.pathname);
+  let title = '';
+  if (match) {
+    try {
+      const row = await env.DB.prepare('SELECT config, pin, deleted_at FROM polls WHERE id = ?').bind(match[1]).first();
+      if (row && !row.pin && !row.deleted_at) title = JSON.parse(row.config).t || '';
+    } catch (e) {
+      // base indisponible : la page s'affiche quand même, avec son aperçu habituel
+    }
     // Un sondage ne regarde que son groupe : on demande aux moteurs de recherche de l'ignorer.
-    .on('head', { element(el) { el.append('<meta name="robots" content="noindex">', { html: true }); } });
+    rewriter = rewriter.on('head', { element(el) { el.append('<meta name="robots" content="noindex">', { html: true }); } });
+  }
   if (title) {
     rewriter = rewriter
       .on('title', { element(el) { el.setInnerContent(`${title} · ${SITE_NAME}`); } })
