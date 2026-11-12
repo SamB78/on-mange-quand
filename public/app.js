@@ -1,16 +1,16 @@
-// La page de « On mange quand ? » : accueil, création, sondage, compte. Sans dépendance ni étape de build.
+// La page de « Dispos » : accueil, création, sondage, compte. Sans dépendance ni étape de build.
 // Les règles des créneaux viennent de shared.js, le même fichier que lit le serveur.
 import {
-  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE,
+  DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
   MOMENTS, MOMENT_SHORT, MOMENT_HOURS, ICONS, norm, weekday, parseYmd, ymd, buildSlots, slotsKey,
 } from '/shared.js';
 
+// Ancien nom du projet, gardé : le navigateur y range les clés d'organisation déjà données.
 const STORE_KEY = 'on-mange-quand:v2';
 const THEME_KEY = 'on-mange-quand:theme';
 const REFRESH_MS = 15000;
 const ID_RE = /^[a-z2-7]{10}$/;
-const SITE = 'On mange quand ?';
-const MIDI = 1 << 2, SOIR = 1 << 4;
+const JOURNEE = 1 << 0, MIDI = 1 << 2, APREM = 1 << 3, SOIR = 1 << 4;
 const WD = ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'];
 const WD_LONG = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 const STATE_LABEL = ['pas dispo', 'dispo', 'si besoin'];
@@ -310,7 +310,7 @@ function newDraft() {
     o: new Map(), // jours réglés à part : jour → ses moments (0 = jour exclu) ; les autres suivent les règles
     pin: '',
     dl: null,     // date limite de réponse (numéro de jour) ou null
-    q: 0,         // nombre minimum de convives, 0 = pas de minimum
+    q: 0,         // nombre minimum de personnes, 0 = pas de minimum
     g: [],        // invités attendus
     r: new Set(), // invités indispensables (prénoms normalisés)
   };
@@ -365,7 +365,7 @@ function pollCardHTML(p) {
         : `<span class="tag">${plural(p.n || 0, 'réponse')}</span>`;
   return `<li><a class="pcard" href="/s/${esc(p.id)}">
     <span class="pcard-ic" aria-hidden="true">${esc(p.ic || ICONS[0])}</span>
-    <span class="pcard-main"><b>${esc(p.t || 'Repas')}</b><small>${fmt(fDM, s)} → ${fmt(fDM, e)}${p.own ? ' · vous organisez' : ''}</small></span>
+    <span class="pcard-main"><b>${esc(p.t || DEFAULT_TITLE)}</b><small>${fmt(fDM, s)} → ${fmt(fDM, e)}${p.own ? ' · vous organisez' : ''}</small></span>
     ${tag}${icon('chevron', 18)}
   </a></li>`;
 }
@@ -376,7 +376,7 @@ const pollListHTML = (items) => (items.length
 function showHome(msg) {
   view = 'home';
   poll = null;
-  document.title = SITE + ' · Trouvez la date où tout le monde peut venir';
+  document.title = SITE_NAME + ' · Trouvez la date où tout le monde peut venir';
   renderTopnav();
   const mine = localPolls();
   const alert = msg ? `<p class="alert" role="alert">${esc(msg)}</p>` : '';
@@ -403,8 +403,8 @@ function showHome(msg) {
     <section class="hero">
       <div class="hero-text">
         <p class="kicker">Gratuit · sans inscription · sans pub</p>
-        <h1>Le repas est décidé. Reste à trouver <em>quand</em>.</h1>
-        <p class="lede">Proposez des créneaux, partagez un lien. Chacun coche ses dispos en dix secondes et la meilleure date ressort toute seule.</p>
+        <h1>Tout le monde est partant. Reste à trouver <em>quand</em>.</h1>
+        <p class="lede">Un dîner, une soirée jeux, un week-end entre potes&nbsp;: proposez des créneaux, partagez un lien. Chacun coche ses dispos en dix secondes et la meilleure date ressort toute seule.</p>
         <div class="hero-cta">
           <a class="btn primary lg" href="/nouveau">Créer un sondage${icon('right')}</a>
           <a class="btn lg" href="/exemple">Voir un exemple</a>
@@ -449,7 +449,7 @@ function showHome(msg) {
             <li>${icon('check', 16)}Vous seul choisissez la date, modifiez ou clôturez</li>
             <li>${icon('check', 16)}Un code d’accès pour protéger le lien</li>
             <li>${icon('check', 16)}Vos réponses ne peuvent pas être modifiées par d’autres</li>
-            <li>${icon('check', 16)}Vos sondages sur tous vos appareils, vos repas dans votre agenda</li>
+            <li>${icon('check', 16)}Vos sondages sur tous vos appareils, vos dates dans votre agenda</li>
           </ul>
           <a class="btn primary" href="/compte">Créer un compte</a>
         </div>
@@ -491,7 +491,7 @@ async function loadHomePolls(mine) {
 }
 
 /* ---------- Vue : création et modification (3 étapes) ---------- */
-const STEPS = ['Le repas', 'Les créneaux', 'Les options'];
+const STEPS = ['Le programme', 'Les créneaux', 'Les options'];
 const FORMULES = [
   { label: 'Tous les soirs', sub: '7 jours sur 7', m: [SOIR, SOIR, SOIR, SOIR, SOIR, SOIR, SOIR] },
   { label: 'Soirs de semaine', sub: 'Du lundi au vendredi', m: [SOIR, SOIR, SOIR, SOIR, SOIR, 0, 0] },
@@ -499,16 +499,18 @@ const FORMULES = [
   { label: 'Vendredi et samedi soir', sub: 'Pour sortir', m: [0, 0, 0, 0, SOIR, SOIR, 0] },
   { label: 'Midis en semaine', sub: 'Pause déjeuner', m: [MIDI, MIDI, MIDI, MIDI, MIDI, 0, 0] },
   { label: 'Brunch du week-end', sub: 'Samedi et dimanche matin', m: [0, 0, 0, 0, 0, 2, 2] },
+  { label: 'Aprèm du week-end', sub: 'Jeux, balade, ciné', m: [0, 0, 0, 0, 0, APREM, APREM] },
+  { label: 'Journées du week-end', sub: 'Rando, sortie, escapade', m: [0, 0, 0, 0, 0, JOURNEE, JOURNEE] },
 ];
 const SPANS = [['2 semaines', 14], ['1 mois', 28], ['2 mois', 56], ['3 mois', MAX_DAYS]];
 
 function stepHTML() {
   if (wiz.step === 1) {
     return `<h2>C’est pour quoi&nbsp;?</h2>
-      <div class="field"><label for="c-title">Nom du repas</label><input type="text" id="c-title" maxlength="80" placeholder="Raclette de janvier" autocomplete="off"></div>
+      <div class="field"><label for="c-title">Nom</label><input type="text" id="c-title" maxlength="80" placeholder="Soirée jeux, raclette, week-end au vert…" autocomplete="off"></div>
       <fieldset class="field"><legend>Pictogramme</legend><div class="icons" id="c-icons"></div></fieldset>
       <div class="field"><label for="c-place">Lieu <span class="opt">(facultatif)</span></label><input type="text" id="c-place" maxlength="80" placeholder="Chez Julie" autocomplete="off"></div>
-      <div class="field"><label for="c-note">Précisions <span class="opt">(facultatif)</span></label><input type="text" id="c-note" maxlength="160" placeholder="Chacun apporte un fromage" autocomplete="off"></div>`;
+      <div class="field"><label for="c-note">Précisions <span class="opt">(facultatif)</span></label><input type="text" id="c-note" maxlength="160" placeholder="Chacun apporte un jeu ou un fromage" autocomplete="off"></div>`;
   }
   if (wiz.step === 2) {
     return `<h2>Quand est-ce possible&nbsp;?</h2>
@@ -548,7 +550,7 @@ function stepHTML() {
       <p class="hint">Passé ce jour, les réponses sont figées et vous pouvez trancher.</p>
     </div>
     <div class="field">
-      <span class="label" id="c-q-l">Nombre minimum de convives</span>
+      <span class="label" id="c-q-l">Nombre minimum de personnes</span>
       <div class="stepper" role="group" aria-labelledby="c-q-l">
         <button type="button" class="iconbtn" data-act="q" data-d="-1" aria-label="Moins">${icon('minus')}</button>
         <output id="c-q" aria-live="polite"></output>
@@ -573,7 +575,7 @@ function showCreate() {
   view = wiz.editing ? 'edit' : 'create';
   if (!wiz.editing) poll = null;
   stopRefresh();
-  document.title = (wiz.editing ? 'Modifier le sondage' : 'Nouveau sondage') + ' · ' + SITE;
+  document.title = (wiz.editing ? 'Modifier le sondage' : 'Nouveau sondage') + ' · ' + SITE_NAME;
   renderTopnav();
   const last = wiz.step === STEPS.length;
   app.innerHTML = `<div class="page narrow wizard">
@@ -934,7 +936,7 @@ async function loadPoll(id) {
     if (err.pin) { showPin(id); return; }
     if (err.status === 404) forgetPoll(id);
     view = 'error';
-    document.title = SITE;
+    document.title = SITE_NAME;
     app.innerHTML = `<div class="page narrow"><section class="state">
       <h1>${err.status === 404 ? 'Sondage introuvable' : 'Impossible d’ouvrir ce sondage'}</h1>
       <p class="muted" role="alert">${esc(err.message)}</p>
@@ -960,7 +962,7 @@ function showPin(id, msg) {
   view = 'pin';
   pinFor = id;
   stopRefresh();
-  document.title = 'Sondage protégé · ' + SITE;
+  document.title = 'Sondage protégé · ' + SITE_NAME;
   renderTopnav();
   app.innerHTML = `<div class="page tiny">
     <section class="card center" aria-labelledby="pin-h">
@@ -1038,14 +1040,14 @@ function factsHTML(c) {
   facts.push([icon('calendar', 16), `Du ${fmt(fShort, s)} au ${fmt(fShort, e)}`]);
   facts.push([icon('rules', 16), esc(rulesLines(st.m).join(' ; ')) + (added ? ` + ${plural(added, 'jour réglé à part', 'jours réglés à part')}` : '')]);
   if (st.dl) facts.push([icon('clock', 16), st.late ? `Réponses closes depuis le ${fmt(fLong, parseYmd(st.dl))}` : `Réponses jusqu’au ${fmt(fLong, parseYmd(st.dl))}`]);
-  if (st.q) facts.push([icon('users', 16), `Au moins ${st.q} convives`]);
+  if (st.q) facts.push([icon('users', 16), `Au moins ${st.q} personnes`]);
   return facts.map(([ic, text]) => `<li>${ic}<span>${text}</span></li>`).join('');
 }
 
 function renderPoll() {
   const c = ctx();
   const st = c.st;
-  document.title = (st.t || 'Repas') + ' · ' + SITE;
+  document.title = (st.t || DEFAULT_TITLE) + ' · ' + SITE_NAME;
   renderTopnav();
   const badges = [];
   if (st.isAdmin) badges.push(`<span class="tag accent">${icon('star', 14)}Vous organisez</span>`);
@@ -1057,7 +1059,7 @@ function renderPoll() {
       <span class="p-icon" aria-hidden="true">${esc(st.ic || ICONS[0])}</span>
       <div class="p-title">
         ${badges.length ? `<p class="tags">${badges.join('')}</p>` : ''}
-        <h1>${esc(st.t || 'Repas')}</h1>
+        <h1>${esc(st.t || DEFAULT_TITLE)}</h1>
         ${st.n ? `<p class="p-note">${esc(st.n)}</p>` : ''}
         <ul class="facts" id="facts">${factsHTML(c)}</ul>
       </div>
@@ -1102,7 +1104,7 @@ const scoreText = (r, n) =>
 function flagsHTML(st, r) {
   const out = [];
   if (r.missing.length) out.push(`Sans ${esc(list(r.missing))}, pourtant indispensable${r.missing.length > 1 ? 's' : ''}`);
-  if (st.q && r.tot < st.q) out.push(`Il manque ${plural(st.q - r.tot, 'convive')} pour atteindre le minimum de ${st.q}`);
+  if (st.q && r.tot < st.q) out.push(`Il manque ${plural(st.q - r.tot, 'personne')} pour atteindre le minimum de ${st.q}`);
   const waiting = pendingGuests(st).filter((name) => isMust(st, name));
   if (waiting.length) out.push(`En attente de la réponse de ${esc(list(waiting))} (indispensable${waiting.length > 1 ? 's' : ''})`);
   if (r.past) out.push('Ce créneau est déjà passé');
@@ -1217,7 +1219,7 @@ function openAnswer(name) {
     ui.name = name || displayName();
     ui.vals = slots.map(() => 0);
   }
-  // Après l'affichage du formulaire : repas déjà décidés du compte, et script Google prêt pour le bouton.
+  // Après l'affichage du formulaire : dates déjà choisies du compte, et script Google prêt pour le bouton.
   setTimeout(() => {
     loadPollConflicts();
     if (GOOGLE_CLIENT_ID && !poll.example) loadGis().catch(() => {});
@@ -1277,7 +1279,7 @@ function answerHTML(c) {
   </section>`;
 }
 
-/* ---------- Créneaux déjà pris : agenda Google et autres repas du compte ---------- */
+/* ---------- Créneaux déjà pris : agenda Google et autres sondages du compte ---------- */
 // Heure de Paris → instant, sans bibliothèque : on mesure le décalage de Paris à cet instant (heure d'été comprise).
 const parisParts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 function parisOffset(ms) {
@@ -1393,9 +1395,9 @@ function agendaToolsHTML() {
     out.push(`<button type="button" class="btn sm gcal" data-act="agenda-google">${GOOGLE_ICON}Comparer avec mon agenda Google</button>`);
   }
   if (a.google) {
-    out.push(`<span>${n ? `${plural(n, 'créneau', 'créneaux')} déjà pris dans votre agenda${a.polls && a.polls.size ? ' ou vos autres repas' : ''} (hachurés).` : 'Votre agenda est libre sur tous ces créneaux.'}</span>`);
+    out.push(`<span>${n ? `${plural(n, 'créneau', 'créneaux')} déjà pris dans votre agenda${a.polls && a.polls.size ? ' ou vos autres sondages' : ''} (hachurés).` : 'Votre agenda est libre sur tous ces créneaux.'}</span>`);
   } else if (n) {
-    out.push(`<span>${plural(n, 'créneau', 'créneaux')} en conflit avec vos autres repas (hachurés).</span>`);
+    out.push(`<span>${plural(n, 'créneau', 'créneaux')} en conflit avec vos autres sondages (hachurés).</span>`);
   }
   if ((a.google || n) && n < total) out.push(`<button type="button" class="chip sm" data-act="fill-free">Cocher les ${plural(total - n, 'créneau libre', 'créneaux libres')}</button>`);
   if (GOOGLE_CLIENT_ID && !a.google) out.push('<span class="hint">Google ne transmet que vos plages occupées, rien n’est enregistré.</span>');
@@ -1424,7 +1426,7 @@ function compareGoogle(btn) {
     showToast(found.size ? `${plural(found.size, 'créneau', 'créneaux')} déjà pris dans votre agenda.` : 'Rien dans votre agenda sur ces créneaux.');
   });
 }
-// Repas déjà décidés dans les autres sondages du compte, au même moment : aucun accès à l'agenda nécessaire.
+// Dates déjà choisies dans les autres sondages du compte, au même moment : aucun accès à l'agenda nécessaire.
 async function loadPollConflicts() {
   if (!auth.user || !poll || poll.example) return;
   const key = agendaKey();
@@ -1540,13 +1542,13 @@ function peopleHTML(c) {
 
 function shareText() {
   const st = poll.st;
-  return `${st.t || 'Repas'} : indique tes dispos ici ${pollLink()}${st.pin ? ` (code : ${st.pin})` : ''}`;
+  return `${st.t || DEFAULT_TITLE} : indique tes dispos ici ${pollLink()}${st.pin ? ` (code : ${st.pin})` : ''}`;
 }
 function shareHTML() {
   const link = pollLink();
   const st = poll.st;
   const wa = 'https://wa.me/?text=' + encodeURIComponent(shareText());
-  const mail = `mailto:?subject=${encodeURIComponent(st.t || 'Repas')}&body=${encodeURIComponent(shareText())}`;
+  const mail = `mailto:?subject=${encodeURIComponent(st.t || DEFAULT_TITLE)}&body=${encodeURIComponent(shareText())}`;
   return `<section class="card share${ui.created ? ' fresh' : ''}" id="share" aria-labelledby="s-h">
     <h2 id="s-h">${ui.created ? 'C’est prêt. Envoyez le lien au groupe.' : 'Inviter le groupe'}</h2>
     <p class="muted">${ui.created
@@ -1598,7 +1600,7 @@ function agendaHTML(sl) {
   const dates = hours ? `${day}T${hours[0]}00/${day}T${hours[1]}00` : `${day}/${ymd(sl.d + 1)}`;
   const details = (poll.st.n ? poll.st.n + '\n\n' : '') + 'Horaires indicatifs.' + (poll.example ? '' : ' Sondage : ' + pollLink());
   const google = 'https://calendar.google.com/calendar/render?action=TEMPLATE'
-    + '&text=' + encodeURIComponent(poll.st.t || 'Repas')
+    + '&text=' + encodeURIComponent(poll.st.t || DEFAULT_TITLE)
     + '&dates=' + dates + (hours ? '&ctz=Europe/Paris' : '')
     + (poll.st.l ? '&location=' + encodeURIComponent(poll.st.l) : '')
     + '&details=' + encodeURIComponent(details);
@@ -1750,7 +1752,7 @@ async function copyLink(btn) {
 }
 async function nativeShare() {
   try {
-    await navigator.share({ title: poll.st.t || 'Repas', text: `${poll.st.t || 'Repas'} : indique tes dispos${poll.st.pin ? ` (code : ${poll.st.pin})` : ''}`, url: pollLink() });
+    await navigator.share({ title: poll.st.t || DEFAULT_TITLE, text: `${poll.st.t || DEFAULT_TITLE} : indique tes dispos${poll.st.pin ? ` (code : ${poll.st.pin})` : ''}`, url: pollLink() });
   } catch (e) { /* partage annulé */ }
 }
 
@@ -1769,7 +1771,7 @@ function setSlot(i, v) {
 // Un appui fait tourner le créneau : pas dispo → dispo → si besoin → pas dispo.
 const NEXT_VALUE = [1, 2, 0];
 const tapValue = (i) => NEXT_VALUE[ui.vals[i] || 0];
-// Rappel quand on se dit dispo sur un créneau déjà pris dans son agenda ou par un autre repas.
+// Rappel quand on se dit dispo sur un créneau déjà pris dans son agenda ou par un autre sondage.
 // Avec une souris, le rappel part du créneau touché (bulle) ; au doigt, c'est le message du bas de l'écran.
 function warnBusy(i, v, el) {
   const c = v ? conflictOf(i) : '';
@@ -1860,7 +1862,7 @@ const backLink = () => `<a class="back" href="${esc(accountReturn || '/')}">${ic
 function showAccount() {
   view = 'account';
   poll = null;
-  document.title = 'Mon compte · ' + SITE;
+  document.title = 'Mon compte · ' + SITE_NAME;
   renderTopnav();
   if (!auth.enabled) {
     app.innerHTML = `<div class="page tiny">${backLink()}<section class="card"><h1>Mon compte</h1><p class="error" role="alert">La connexion n’est pas disponible pour le moment. Tout le reste fonctionne sans compte.</p></section></div>`;
@@ -1900,7 +1902,7 @@ function showAccount() {
     ${u.provider === 'password' && !u.verified ? '<div class="banner"><p>Confirmez votre adresse e-mail&nbsp;: un lien vous a été envoyé.</p><button type="button" class="btn sm" data-act="verify-again">Renvoyer l’e-mail</button></div>' : ''}
     <div class="actions"><a class="btn primary" href="/">Mes sondages</a><button type="button" class="btn" data-act="logout">Se déconnecter</button></div>
     <section class="card" aria-labelledby="ag-h">
-      <h2 id="ag-h">Mes repas dans mon agenda</h2>
+      <h2 id="ag-h">Mes dates dans mon agenda</h2>
       <p class="muted">Ajoutez ce lien une fois à votre agenda&nbsp;: chaque date choisie s’y ajoute toute seule, et suit les changements. Sont concernés les sondages que vous organisez, et ceux où vous avez répondu dispo à la date retenue.</p>
       <div class="feed" id="me-feed">${feedHTML()}</div>
     </section>
@@ -1920,7 +1922,6 @@ function showAccount() {
 
 /* ---------- Lien d'agenda personnel (abonnement) ---------- */
 // account.feed : undefined pendant le chargement, null sans lien, sinon l'adresse https du lien.
-const FEED_NAME = 'Repas · On mange quand ?';
 function feedHTML() {
   const url = account.feed;
   if (url === undefined) return '<p class="hint">Chargement…</p>';
@@ -1934,10 +1935,10 @@ function feedHTML() {
       <a class="btn sm" href="${esc(outlook)}" target="_blank" rel="noopener">Outlook</a>
     </div>
     <div class="linkbox"><input type="text" id="feed-link" readonly value="${esc(url)}" aria-label="Lien d’agenda"><button type="button" class="btn" data-act="copy" data-target="feed-link">${icon('copy', 16)}<span>Copier</span></button></div>
-    <p class="hint">Google Agenda relit ce lien toutes les quelques heures, Apple et Outlook plus souvent. Il est personnel&nbsp;: toute personne qui l’a voit vos repas décidés.</p>
+    <p class="hint">Google Agenda relit ce lien toutes les quelques heures, Apple et Outlook plus souvent. Il est personnel&nbsp;: toute personne qui l’a voit vos dates choisies.</p>
     ${account.feedAsk
       ? `<div class="confirm"><span>${account.feedAsk === 'off'
-          ? 'Désactiver le lien&nbsp;? Les repas disparaîtront des agendas où il a été ajouté.'
+          ? 'Désactiver le lien&nbsp;? Les dates disparaîtront des agendas où il a été ajouté.'
           : 'Changer de lien&nbsp;? L’actuel cessera de marcher&nbsp;: il faudra ajouter le nouveau à votre agenda.'}</span>
           <button type="button" class="btn sm danger" data-act="feed-${account.feedAsk === 'off' ? 'off' : 'renew'}">${account.feedAsk === 'off' ? 'Désactiver' : 'Changer de lien'}</button>
           <button type="button" class="btn sm" data-act="feed-cancel">Annuler</button></div>`
@@ -2036,7 +2037,7 @@ function deleteAccount(btn) {
 function showPrivacy() {
   view = 'privacy';
   poll = null;
-  document.title = 'Confidentialité · ' + SITE;
+  document.title = 'Confidentialité · ' + SITE_NAME;
   renderTopnav();
   app.innerHTML = `<div class="page narrow">
     <button type="button" class="back" data-act="back">${icon('left', 16)}Retour</button>
@@ -2044,7 +2045,7 @@ function showPrivacy() {
       <h1>Confidentialité</h1>
       <p class="muted">Dernière mise à jour&nbsp;: novembre 2026</p>
       <h2>Sans compte</h2>
-      <p>Tout fonctionne sans compte. Un sondage enregistre seulement ce que vous y écrivez&nbsp;: nom du repas, lieu, prénoms attendus, puis prénom, dispos et petit mot de chaque réponse. Ces informations sont visibles par toute personne qui a le lien du sondage.</p>
+      <p>Tout fonctionne sans compte. Un sondage enregistre seulement ce que vous y écrivez&nbsp;: nom du sondage, lieu, prénoms attendus, puis prénom, dispos et petit mot de chaque réponse. Ces informations sont visibles par toute personne qui a le lien du sondage.</p>
       <p>Votre navigateur garde aussi, sur votre appareil uniquement, la liste des sondages ouverts, le prénom utilisé, le thème choisi et, pour les sondages que vous avez créés sans compte, une clé d’organisation qui vous permet de les gérer depuis cet appareil. Notre serveur n’en conserve qu’une empreinte.</p>
       <h2>Avec un compte</h2>
       <ul>
@@ -2059,7 +2060,7 @@ function showPrivacy() {
       <h2>Agenda</h2>
       <ul>
         <li><strong>Comparer avec mon agenda Google</strong>, seulement si vous touchez ce bouton&nbsp;: Google vous demande votre accord, puis donne à votre navigateur les plages où vous êtes occupé sur la période du sondage, sans le titre ni le contenu de vos événements. La comparaison se fait sur votre appareil&nbsp;: rien n’est envoyé à notre serveur ni enregistré. Pour que la fenêtre de Google s’ouvre sans délai, son script est chargé quand vous ouvrez le formulaire de réponse.</li>
-        <li><strong>Lien d’agenda</strong> (avec un compte)&nbsp;: si vous le créez, nous gardons un jeton secret relié à votre compte. Toute personne qui a le lien voit les repas décidés de vos sondages (nom, lieu, précisions, date). Vous pouvez le changer ou le désactiver dans Mon compte&nbsp;; il est effacé avec votre compte.</li>
+        <li><strong>Lien d’agenda</strong> (avec un compte)&nbsp;: si vous le créez, nous gardons un jeton secret relié à votre compte. Toute personne qui a le lien voit les dates choisies de vos sondages (nom, lieu, précisions, date). Vous pouvez le changer ou le désactiver dans Mon compte&nbsp;; il est effacé avec votre compte.</li>
       </ul>
       <h2>Où sont les données</h2>
       <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase). Les polices d’écriture sont servies par Google Fonts.</p>

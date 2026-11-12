@@ -1,17 +1,17 @@
-# On mange quand ?
+# Dispos
 
-Sondage de dispos pour fixer la date d'un repas. Tout fonctionne sans compte ; un compte, facultatif, donne les droits d'organisateur.
+Sondage de dispos pour fixer la date d'un dîner, d'une soirée jeux ou d'un week-end entre amis. Tout fonctionne sans compte ; un compte, facultatif, donne les droits d'organisateur.
 
 - **Prod : https://on-mange-quand.on-mange-quand.workers.dev**
 - **Test : https://on-mange-quand-test.on-mange-quand.workers.dev** (sa propre base, pour essayer les nouveautés)
 
 ## Comment ça marche
 
-1. **Créer**, en trois étapes : le repas (nom, pictogramme, lieu), les créneaux, les options.
-   - Les créneaux se décrivent par des **règles** plutôt que par une liste de dates : une période, puis une formule toute faite (« Soirs de semaine », « Week-end », « Midis en semaine »…) ou sa propre grille jour par jour (« le soir en semaine, midi et soir le week-end », « seulement les mardis et jeudis »). Dans l'aperçu en calendrier, toucher un jour ouvre le choix de ses moments : l'exclure, l'ajouter s'il est hors des règles, ou lui donner d'autres créneaux que la règle (« Journée » remplace les autres moments) ; les **jours fériés** de la période sont signalés et s'ouvrent d'un geste à tous les moments, qu'ils tombent hors des jours choisis ou un jour où seul le soir est proposé.
-   - Options, toutes facultatives : les **invités attendus** (la page dit qui n'a pas encore répondu), les **indispensables** (les créneaux où l'un d'eux n'est pas dispo sont écartés), une **date limite de réponse**, un **nombre minimum de convives**, et, avec un compte, un **code d'accès** (4 à 6 chiffres).
-2. **Partager** le lien `/s/<identifiant>`, une seule fois (et le code, s'il y en a un). L'aperçu du lien dans WhatsApp ou iMessage porte le nom du repas.
-3. **Répondre** : on choisit son prénom, puis on « peint » ses créneaux sur le calendrier (dispo, si besoin, pas dispo ; à la souris on peut glisser, et un jour de la semaine remplit toute sa colonne). On peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les repas déjà décidés dans ses autres sondages.
+1. **Créer**, en trois étapes : le programme (nom, pictogramme, lieu), les créneaux, les options.
+   - Les créneaux se décrivent par des **règles** plutôt que par une liste de dates : une période, puis une formule toute faite (« Soirs de semaine », « Week-end », « Aprèm du week-end »…) ou sa propre grille jour par jour (« le soir en semaine, midi et soir le week-end », « seulement les mardis et jeudis »). Dans l'aperçu en calendrier, toucher un jour ouvre le choix de ses moments : l'exclure, l'ajouter s'il est hors des règles, ou lui donner d'autres créneaux que la règle (« Journée » remplace les autres moments) ; les **jours fériés** de la période sont signalés et s'ouvrent d'un geste à tous les moments, qu'ils tombent hors des jours choisis ou un jour où seul le soir est proposé.
+   - Options, toutes facultatives : les **invités attendus** (la page dit qui n'a pas encore répondu), les **indispensables** (les créneaux où l'un d'eux n'est pas dispo sont écartés), une **date limite de réponse**, un **nombre minimum de personnes**, et, avec un compte, un **code d'accès** (4 à 6 chiffres).
+2. **Partager** le lien `/s/<identifiant>`, une seule fois (et le code, s'il y en a un). L'aperçu du lien dans WhatsApp ou iMessage porte le nom du sondage.
+3. **Répondre** : on choisit son prénom, puis on « peint » ses créneaux sur le calendrier (dispo, si besoin, pas dispo ; à la souris on peut glisser, et un jour de la semaine remplit toute sa colonne). On peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les dates déjà choisies dans ses autres sondages.
 4. **Décider** : le meilleur créneau s'affiche en haut, suivi du classement et d'un calendrier où chaque créneau est d'autant plus foncé qu'il réunit de monde. Toucher un créneau montre qui est dispo ; toucher une personne montre ses dispos. Une fois la date choisie, chacun l'ajoute à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
 
 L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux du compte. `/exemple` montre un sondage fictif où tout peut s'essayer.
@@ -40,7 +40,7 @@ Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perd
 ### Agenda
 
 - **Comparer avec mon agenda Google** : Google ne donne au navigateur que les plages occupées de l'agenda principal, sur la période du sondage. La comparaison se fait dans le navigateur, rien n'est envoyé au serveur. Un créneau est « pris » si une plage occupée chevauche ses horaires indicatifs (8 h – 23 h pour « Journée »).
-- **Lien d'agenda** : une adresse secrète par compte (`/api/agenda/<jeton>.ics`) à ajouter une fois dans Google Agenda, Apple Calendrier ou Outlook. Elle contient les repas décidés que le compte organise, ou où il a répondu dispo (ou si besoin) à la date retenue. On peut la changer ou la désactiver dans « Mon compte ». Google Agenda la relit toutes les quelques heures.
+- **Lien d'agenda** : une adresse secrète par compte (`/api/agenda/<jeton>.ics`) à ajouter une fois dans Google Agenda, Apple Calendrier ou Outlook. Elle contient les dates choisies des sondages que le compte organise, ou où il a répondu dispo (ou si besoin) à la date retenue. On peut la changer ou la désactiver dans « Mon compte ». Google Agenda la relit toutes les quelques heures.
 
 ## Organisation du code
 
