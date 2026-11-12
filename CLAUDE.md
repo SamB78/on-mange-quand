@@ -29,7 +29,7 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 
 ## Tester en local
 
-`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons et les règles partagées. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
+`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons, les règles partagées et les en-têtes de sécurité. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
 
 ## Code
 
@@ -40,6 +40,7 @@ Aucune dépendance ni étape de build : `public/` est servi tel quel.
 - `src/worker.js` : l'API `/api/polls` et `/api/me` (routes listées en tête du fichier) ; rend aussi la page pour toute adresse sans extension (`/`, `/nouveau`, `/s/<id>`, `/compte`, `/confidentialite`, `/exemple`) et, pour `/s/<id>`, glisse le nom du sondage dans l'aperçu du lien (jamais s'il a un code).
 - `src/auth.js` : vérification des jetons Firebase (signature Google, projet, expiration). Les jetons non signés de l'émulateur ne sont acceptés qu'en local avec `AUTH_EMULATOR_LOCAL_ONLY=1`, que seul `npm run dev` fournit.
 - `migrations/` : une migration par changement de base, jamais modifiée une fois appliquée en prod.
+- Sécurité : la politique de contenu (CSP) est une balise meta de `public/index.html` ; aucun script en ligne (le thème est posé par `public/theme.js`). Toute nouvelle ressource externe (script, connexion, iframe) doit y être ajoutée. Les autres en-têtes sont dans `public/_headers` (fichiers servis tels quels) et `SECURITY_HEADERS` du serveur, à garder identiques (`npm test` le vérifie).
 
 Ancien nom : les identifiants techniques gardent « on-mange-quand » / « omq ». Ne pas les renommer, ce qui circule déjà cesserait de marcher : mémoire du navigateur `on-mange-quand:…`, préfixe des empreintes de codes, cookie `omq_pin_`, UID des événements d'agenda. Le worker, les bases D1, le projet Firebase, le dépôt et `package.json` gardent aussi l'ancien nom (changer le worker changerait l'adresse de la prod).
 

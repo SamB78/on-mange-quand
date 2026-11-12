@@ -81,7 +81,7 @@ npm run auth:local    # dans un premier terminal : émulateur de connexion Fireb
 npm run dev           # dans un second terminal
 ```
 
-La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests (vérification des connexions, règles des créneaux).
+La page s'ouvre sur http://localhost:8787 avec une base de données locale. En local, la connexion passe par l'émulateur : les comptes créés n'existent que sur l'ordinateur. `npm test` lance les tests (vérification des connexions, règles des créneaux, en-têtes de sécurité).
 
 ## Brancher Firebase
 

@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- Politique de contenu : seuls le site, Firebase (connexion) et Google (connexion, agenda) peuvent charger du code.
+     Les adresses 127.0.0.1:9099 / localhost:9099 servent à l’émulateur de connexion, en local. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://accounts.google.com; img-src 'self' data: https://*.googleusercontent.com https://www.gstatic.com; font-src 'self'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://accounts.google.com http://127.0.0.1:9099 http://localhost:9099; frame-src https://on-mange-quand-5a00a.firebaseapp.com https://accounts.google.com https://apis.google.com http://127.0.0.1:9099 http://localhost:9099; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Dispos · Trouvez la date où tout le monde peut venir</title>
 <meta name="description" content="Un dîner, une soirée jeux, un week-end : proposez des créneaux, partagez un lien, chacun coche ses dispos et la meilleure date ressort toute seule. Gratuit, sans inscription.">
 <meta property="og:title" content="Dispos">
@@ -14,10 +17,7 @@
 <link rel="preload" href="/fonts/bricolage-grotesque-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
-<script>
-// Thème choisi à la main (sinon celui de l'appareil) : posé avant l'affichage pour éviter un éclair de couleur.
-try { var t = localStorage.getItem('on-mange-quand:theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
-</script>
+<script src="/theme.js"></script>
 </head>
 <body>
 <a class="skip" href="#app">Aller au contenu</a>

@@ -46,6 +46,21 @@ class HttpError extends Error {
   }
 }
 
+// En-têtes de sécurité de toutes les réponses du serveur. Les fichiers servis tels quels reçoivent les mêmes
+// depuis public/_headers : garder les deux listes identiques (npm test le vérifie). La CSP est dans index.html.
+export const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Strict-Transport-Security': 'max-age=31536000',
+};
+function secured(res) {
+  const out = new Response(res.body, res);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) out.headers.set(name, value);
+  return out;
+}
+
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
@@ -619,6 +634,22 @@ async function handleApi(request, env, url) {
 /* ---------- La page ---------- */
 // Toutes les adresses de l'app rendent la même page ; elle lit l'adresse et affiche la bonne vue.
 // Pour un sondage, on glisse son nom dans l'aperçu du lien (WhatsApp, iMessage…), sauf s'il est protégé par un code.
+async function route(request, env) {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith('/api/')) {
+    try {
+      return await handleApi(request, env, url);
+    } catch (err) {
+      if (err instanceof HttpError) return json({ ...err.extra, error: err.message }, err.status);
+      console.error(err);
+      return json({ error: 'Le serveur a rencontré un problème. Réessayez dans un instant.' }, 500);
+    }
+  }
+  const last = url.pathname.split('/').pop();
+  if ((request.method === 'GET' || request.method === 'HEAD') && !last.includes('.')) return servePage(request, env, url);
+  return env.ASSETS.fetch(request);
+}
+
 async function servePage(request, env, url) {
   const res = await env.ASSETS.fetch(new Request(new URL('/', url), { method: 'GET' }));
   const match = /^\/s\/([a-z2-7]{10})\/?$/.exec(url.pathname);
@@ -647,18 +678,6 @@ async function servePage(request, env, url) {
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/')) {
-      try {
-        return await handleApi(request, env, url);
-      } catch (err) {
-        if (err instanceof HttpError) return json({ ...err.extra, error: err.message }, err.status);
-        console.error(err);
-        return json({ error: 'Le serveur a rencontré un problème. Réessayez dans un instant.' }, 500);
-      }
-    }
-    const last = url.pathname.split('/').pop();
-    if ((request.method === 'GET' || request.method === 'HEAD') && !last.includes('.')) return servePage(request, env, url);
-    return env.ASSETS.fetch(request);
+    return secured(await route(request, env));
   },
 };
