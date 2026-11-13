@@ -14,8 +14,8 @@ Les anciennes adresses `on-mange-quand.on-mange-quand.workers.dev` (prod) et `on
    - **L'aperçu** : le calendrier des créneaux, à retoucher. Toucher un jour ouvre le choix de ses créneaux (l'exclure, l'ajouter, lui donner d'autres moments ou un autre horaire) ; un week-end ou une semaine s'y dessine en bande, qu'on allonge, raccourcit ou retire en touchant les jours.
    - Options, toutes facultatives : les **invités attendus** (la page dit qui n'a pas encore répondu), les **indispensables** (les créneaux où l'un d'eux n'est pas dispo sont écartés), une **date limite de réponse** et, avec un compte, un **code d'accès** (4 à 6 chiffres).
 2. **Partager** le lien `/s/<identifiant>`, une seule fois (et le code, s'il y en a un). L'aperçu du lien dans WhatsApp ou iMessage porte le nom du sondage.
-3. **Répondre** : on choisit son prénom, puis on « peint » ses créneaux sur le calendrier (dispo, si besoin, pas dispo ; à la souris on peut glisser, et un jour de la semaine remplit toute sa colonne). Les week-ends et les semaines s'affichent en liste, une ligne par séjour. On peut laisser un petit mot. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Comparer avec mon agenda Google ») et, avec un compte, les dates déjà choisies dans ses autres sondages.
-4. **Décider** : le meilleur créneau s'affiche en haut, suivi du classement et d'un calendrier où chaque créneau est d'autant plus foncé qu'il réunit de monde. Toucher un créneau montre qui est dispo ; toucher une personne montre ses dispos. Une fois la date choisie, chacun l'ajoute à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
+3. **Répondre** : qui ouvre le lien sans avoir encore répondu tombe directement sur le calendrier, sous les visages de ceux qui ont déjà répondu (« Plus que Tom ! »). On « peint » ses créneaux (un appui : dispo, deux : si besoin, trois : pas dispo ; à la souris on peut glisser, et un jour de la semaine remplit toute sa colonne) ; une barre en bas de l'écran compte les créneaux cochés et porte le bouton « Envoyer ». Le prénom ne se demande qu'à ce moment-là, dans une fenêtre qui propose les invités attendus, avec un petit mot facultatif. Les week-ends et les semaines s'affichent en liste, une ligne par séjour. Les créneaux déjà pris sont signalés : ceux de son **agenda Google** (bouton « Voir mon agenda Google ») et, avec un compte, les dates déjà choisies dans ses autres sondages. Tant qu'on n'a pas répondu, les résultats restent repliés (« La date se dessine »), avec un lien pour les voir quand même.
+4. **Décider** : le meilleur créneau s'affiche en grand, suivi des trois suivants ; « Voir tout le calendrier » déplie un calendrier où chaque créneau est d'autant plus foncé qu'il réunit de monde. Toucher un créneau montre qui est dispo ; toucher un visage dans « Qui a répondu » montre ses dispos (et permet de modifier sa réponse). « Relancer Tom » partage le lien quand des invités manquent. Les réglages du sondage (copier le lien, modifier, clôturer, dupliquer, rattacher à son compte, supprimer) sont dans le menu « Gérer » de l'en-tête. Une fois la date choisie, chacun l'ajoute à son agenda. Avec un compte, un **lien d'agenda** personnel (« Mon compte ») ajoute tout seul chaque date choisie.
 
 L'accueil liste les sondages ouverts sur l'appareil et, une fois connecté, ceux du compte. Tant qu'on n'a jamais organisé de sondage, une courte animation y montre les étapes (proposer des créneaux, envoyer le lien, chacun coche ses dispos, la date ressort) ; elle se met en pause d'un clic et se masque sous la liste. `/exemple` montre un sondage fictif où tout peut s'essayer.
 
@@ -32,10 +32,10 @@ Connexion par e-mail et mot de passe ou avec Google, gérée par Firebase Authen
 | Modifier une réponse | donnée sans compte : tout le monde ; avec un compte : son auteur | pareil, et l'organisateur, même clôturé |
 | Choisir la date finale | tout le monde | l'organisateur |
 | Modifier les réglages, clôturer, rouvrir, supprimer | tout le monde, avec le lien | l'organisateur, depuis tous ses appareils |
-| Devenir l'organisateur | toute personne connectée (bloc « Organisation », avec confirmation) | — |
+| Devenir l'organisateur | toute personne connectée (menu « Gérer », avec confirmation) | — |
 | Ajouter, changer ou retirer le code d'accès | personne | l'organisateur |
 
-Sans compte, tout le monde est à égalité : c'est simple et rien ne se perd en changeant d'appareil ou de navigateur. Pour garder la main, il suffit de se connecter et de **rattacher le sondage à son compte** (bloc « Organisation ») : on en devient le seul organisateur. Comme toute personne connectée peut le faire tant que le sondage n'a pas d'organisateur, la page demande confirmation. Un sondage clôturé, ou dont la date limite est passée, ne prend plus de réponses : sans organisateur, n'importe qui peut le rouvrir ou repousser la date.
+Sans compte, tout le monde est à égalité : c'est simple et rien ne se perd en changeant d'appareil ou de navigateur. Pour garder la main, il suffit de se connecter et de **rattacher le sondage à son compte** (menu « Gérer ») : on en devient le seul organisateur. Comme toute personne connectée peut le faire tant que le sondage n'a pas d'organisateur, la page demande confirmation. Un sondage clôturé, ou dont la date limite est passée, ne prend plus de réponses : sans organisateur, n'importe qui peut le rouvrir ou repousser la date.
 
 ### Corbeille et conservation
 
@@ -47,7 +47,7 @@ Réservé aux organisateurs connectés, pour qu'un code ne puisse pas être perd
 
 ### Agenda
 
-- **Comparer avec mon agenda Google** : Google ne donne au navigateur que les plages occupées de l'agenda principal, sur la période du sondage. La comparaison se fait dans le navigateur, rien n'est envoyé au serveur. Un créneau est « pris » si une plage occupée chevauche ses horaires (indicatifs pour un moment, 8 h – 23 h pour « Journée ») ; un week-end ou une semaine est pris les jours où une plage occupée tombe.
+- **Voir mon agenda Google** : Google ne donne au navigateur que les plages occupées de l'agenda principal, sur la période du sondage. La comparaison se fait dans le navigateur, rien n'est envoyé au serveur. Un créneau est « pris » si une plage occupée chevauche ses horaires (indicatifs pour un moment, 8 h – 23 h pour « Journée ») ; un week-end ou une semaine est pris les jours où une plage occupée tombe.
 - **Lien d'agenda** : une adresse secrète par compte (`/api/agenda/<jeton>.ics`) à ajouter une fois dans Google Agenda, Apple Calendrier ou Outlook. Elle contient les dates choisies des sondages que le compte organise, ou où il a répondu dispo (ou si besoin) à la date retenue. On peut la changer ou la désactiver dans « Mon compte ». Google Agenda la relit toutes les quelques heures.
 
 ## Organisation du code
@@ -96,7 +96,7 @@ Le projet Firebase se renseigne à deux endroits : `CONFIG` dans `public/firebas
 
 ## Brancher l'agenda Google
 
-Le bouton « Comparer avec mon agenda Google » utilise un client OAuth à part, **Client Web 2** (`GOOGLE_CLIENT_ID` dans `public/app.js` ; vide = bouton masqué). Le client « Web client (auto created by Google Service) » sert à la connexion Firebase : ne pas toucher à son code secret. Celui de Client Web 2 ne sert à rien, la page n'utilise que l'identifiant. Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
+Le bouton « Voir mon agenda Google » utilise un client OAuth à part, **Client Web 2** (`GOOGLE_CLIENT_ID` dans `public/app.js` ; vide = bouton masqué). Le client « Web client (auto created by Google Service) » sert à la connexion Firebase : ne pas toucher à son code secret. Celui de Client Web 2 ne sert à rien, la page n'utilise que l'identifiant. Dans la [console Google Cloud](https://console.cloud.google.com/) du projet `on-mange-quand-5a00a` :
 
 1. **API et services → Bibliothèque** : **Google Calendar API** activée.
 2. **Google Auth Platform → Accès aux données** : niveau d'accès `https://www.googleapis.com/auth/calendar.freebusy` (lecture des disponibilités seulement). Google le range parmi les accès non sensibles : pas d'écran « application non validée », pas de limite de 100 personnes.
