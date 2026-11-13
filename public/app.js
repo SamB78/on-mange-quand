@@ -2803,6 +2803,11 @@ function showPrivacy() {
       </ul>
       <h2>Ce que nous ne faisons pas</h2>
       <p>Pas de publicité, pas de revente, pas de pistage. Les données servent uniquement à faire fonctionner les sondages. Comme pour tout site, nos hébergeurs gardent des journaux techniques (adresse IP, heure de connexion) pour le bon fonctionnement et la sécurité.</p>
+      <p>Le site ne dépose aucun cookie de mesure d’audience ni de publicité&nbsp;: c’est pour cela qu’il ne vous demande pas d’accepter des cookies.</p>
+      <h2>Bases légales</h2>
+      <p>Les sondages, les comptes et le lien d’agenda sont traités pour faire fonctionner le service que vous utilisez. La limite d’envois, le comptage des essais de code et les journaux techniques reposent sur notre intérêt légitime à protéger le site et ses utilisateurs contre les abus. La comparaison avec Google Agenda n’a lieu que si vous la demandez et donnez votre accord à Google.</p>
+      <h2>Limite d’envois</h2>
+      <p>Pour freiner les robots, les envois (réponses, créations et modifications de sondages) sont comptés minute par minute avec une empreinte de votre adresse IP, jamais l’adresse elle-même. Ces compteurs sont effacés chaque nuit.</p>
       <h2>Durée de conservation</h2>
       <p>Un sondage est effacé automatiquement, avec toutes ses réponses, ${KEEP_MONTHS}&nbsp;mois après sa dernière date proposée s’il n’a pas été modifié depuis. Un sondage supprimé reste ${TRASH_DAYS}&nbsp;jours dans la corbeille, le temps de pouvoir le restaurer, puis il est effacé. Un compte est gardé tant que vous ne le supprimez pas.</p>
       <h2>Sondages protégés par un code</h2>
@@ -2813,7 +2818,8 @@ function showPrivacy() {
         <li><strong>Lien d’agenda</strong> (avec un compte)&nbsp;: si vous le créez, nous gardons un jeton secret relié à votre compte. Toute personne qui a le lien voit les dates choisies de vos sondages (nom, lieu, précisions, date). Vous pouvez le changer ou le désactiver dans Mon compte&nbsp;; il est effacé avec votre compte.</li>
       </ul>
       <h2>Où sont les données</h2>
-      <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase). Les polices d’écriture sont servies par le site lui-même.</p>
+      <p>Les sondages sont hébergés par Cloudflare (base de données en Europe de l’Ouest). Les comptes sont hébergés par Google (Firebase). Les polices d’écriture sont servies par le site lui-même. Le module de connexion, lui, est chargé sur chaque page depuis les serveurs de Google (gstatic.com)&nbsp;: Google reçoit donc votre adresse IP, même si vous n’avez pas de compte.</p>
+      <p>Cloudflare et Google sont des entreprises américaines&nbsp;: vos données peuvent être traitées hors de l’Union européenne, notamment aux États-Unis. Ces transferts sont encadrés par le cadre de protection des données UE–États-Unis (Data Privacy Framework), auquel les deux entreprises ont adhéré, et par les clauses contractuelles types de la Commission européenne prévues dans leurs contrats.</p>
       <h2>Supprimer votre compte</h2>
       <p>Dans <a href="/compte">Mon compte</a>, touchez «&nbsp;Supprimer mon compte&nbsp;». Votre compte est effacé chez Firebase. Vos réponses restent dans les sondages mais ne sont plus liées à vous, et les sondages que vous organisiez restent accessibles à leurs participants, sans organisateur ni code d’accès.</p>
       <h2>Vos droits</h2>
