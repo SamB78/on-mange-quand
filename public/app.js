@@ -2,7 +2,8 @@
 // Les règles des créneaux viennent de shared.js, le même fichier que lit le serveur.
 import {
   DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, SITE_NAME, FEED_NAME, DEFAULT_TITLE, TRASH_DAYS, KEEP_MONTHS,
-  MOMENTS, MOMENT_SHORT, MOMENT_HOURS, ICONS, norm, weekday, parseYmd, ymd, buildSlots, slotsKey,
+  MOMENTS, MOMENT_SHORT, MOMENT_HOURS, ICONS, MAX_RANGES, STAY_MARGIN,
+  norm, weekday, parseYmd, ymd, buildSlots, slotsKey, slotTimes, slotEnd,
 } from '/shared.js';
 
 // Ancien nom du projet, gardé : le navigateur y range déjà les sondages ouverts et le prénom.
@@ -12,7 +13,7 @@ const REFRESH_MS = 15000;
 // Adresse de contact affichée (mentions légales, confidentialité) : questions, droits sur les données, signalements.
 const CONTACT = 'contact@dispos.day';
 const ID_RE = /^[a-z2-7]{10}$/;
-const JOURNEE = 1 << 0, MIDI = 1 << 2, APREM = 1 << 3, SOIR = 1 << 4;
+const MIDI = 1 << 2, SOIR = 1 << 4; // moments de l'exemple
 const WD = ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'];
 const WD_LONG = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 const STATE_LABEL = ['pas dispo', 'dispo', 'si besoin'];
@@ -26,7 +27,6 @@ const $ = (sel) => document.querySelector(sel);
 /* ---------- Outils ---------- */
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, one, many) => n + ' ' + (n > 1 ? (many || one + 's') : one);
-const popcount = (r) => (r & 1) + ((r >> 1) & 1) + ((r >> 2) & 1) + ((r >> 3) & 1) + ((r >> 4) & 1);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 // « a, b et c »
 const list = (items) => (items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' et ' + items[items.length - 1]);
@@ -63,6 +63,7 @@ const dateOf = (d) => new Date(d * DAY_MS).getUTCDate();
 const monthKey = (d) => { const t = new Date(d * DAY_MS); return t.getUTCFullYear() * 12 + t.getUTCMonth(); };
 const F = (o) => new Intl.DateTimeFormat('fr-FR', Object.assign({ timeZone: 'UTC' }, o));
 const fShort = F({ weekday: 'short', day: 'numeric', month: 'short' });
+const fWD = F({ weekday: 'short', day: 'numeric' });
 const fLong = F({ weekday: 'long', day: 'numeric', month: 'long' });
 const fMonth = F({ month: 'long', year: 'numeric' });
 const fDM = F({ day: 'numeric', month: 'short' });
@@ -125,7 +126,7 @@ function remember(st, me) {
   const chosen = st.f >= 0 ? buildSlots(st)[st.f] : null;
   s.polls[st.i] = Object.assign({}, prev, {
     t: st.t, ic: st.ic || '', s: st.s, e: st.e, n: st.p.length, seen: Date.now(), own: !!st.isOwner,
-    closed: !!(st.closed || st.late), dd: chosen ? ymd(chosen.d) : '', dt: chosen ? chosen.t : 0,
+    closed: !!(st.closed || st.late), dd: chosen ? ymd(chosen.d) : '', dt: chosen ? chosen.t : 0, ds: chosen ? slotToJson(chosen) : null,
     me: me !== undefined ? me : (prev.me || null),
   });
   // On garde les 50 derniers sondages ouverts ; ceux créés sur cet appareil ne sont jamais oubliés.
@@ -214,9 +215,34 @@ async function api(method, path, body, retry = true) {
 }
 
 /* ---------- Créneaux, règles et classement ---------- */
-const slotLong = (sl) => cap(fmt(fLong, sl.d)) + ' · ' + MOMENTS[sl.t];
-const slotShort = (sl) => fmt(fShort, sl.d) + ' · ' + MOMENTS[sl.t].toLowerCase();
-const slotHours = (sl) => (MOMENT_HOURS[sl.t] ? `${hourLabel(MOMENT_HOURS[sl.t][0])} – ${hourLabel(MOMENT_HOURS[sl.t][1])}` : 'toute la journée');
+// Trois genres de créneaux (voir shared.js) : un moment d'un jour, un horaire précis (sl.h), un séjour de d à d2.
+const isStay = (sl) => sl.d2 != null;
+const rangeText = (h) => `${hourLabel(h[0])} – ${h[1] === '2400' ? 'minuit' : hourLabel(h[1])}`;
+// Arrivée d'un séjour dans la seconde moitié du jour : le soir pour un week-end, l'après-midi pour une semaine.
+const arrivalWord = (jr) => (jr && jr[0] === 's' ? 'après-midi' : 'soir');
+function stayText(sl, word = arrivalWord(poll && poll.st.jr)) {
+  const from = monthKey(sl.d) === monthKey(sl.d2) ? fmt(fWD, sl.d) : fmt(fShort, sl.d);
+  return `${from}${sl.ah ? ' ' + word : ''} → ${fmt(fShort, sl.d2)}${sl.bh ? '' : ' matin'}`;
+}
+const stayLength = (sl) => `${plural(sl.d2 - sl.d + 1, 'jour')}, ${plural(sl.d2 - sl.d, 'nuit')}`;
+const slotLong = (sl) => (isStay(sl) ? cap(stayText(sl)) : cap(fmt(fLong, sl.d)) + ' · ' + (sl.h ? rangeText(sl.h) : MOMENTS[sl.t]));
+const slotShort = (sl) => (isStay(sl) ? stayText(sl) : fmt(fShort, sl.d) + ' · ' + (sl.h ? rangeText(sl.h) : MOMENTS[sl.t].toLowerCase()));
+const slotHours = (sl) => (isStay(sl) ? stayLength(sl) : sl.h ? rangeText(sl.h)
+  : MOMENT_HOURS[sl.t] ? `${hourLabel(MOMENT_HOURS[sl.t][0])} – ${hourLabel(MOMENT_HOURS[sl.t][1])}` : 'toute la journée');
+// Étiquette dans la case du calendrier, quand un jour a plusieurs créneaux : « Soir », « 19 h ».
+const slotTag = (sl) => (sl.h ? hourLabel(sl.h[0]) : MOMENT_SHORT[sl.t]);
+// Nom d'un moment (ou d'une plage d'un sondage à horaires précis), pour les boutons « tout le soir » et les légendes.
+const momentName = (st, t) => (st.k === 'h' ? rangeText(st.h[t]) : MOMENTS[t]);
+const momentCap = (st, t) => (st.k === 'h' ? rangeText(st.h[t]) : MOMENTS[t] + (MOMENT_HOURS[t] ? ` · ${slotHours({ t })}` : ''));
+// Le créneau choisi, tel que le serveur (ds de /api/me/polls) et la mémoire du navigateur le gardent.
+const slotToJson = (sl) => ({ d: ymd(sl.d), t: sl.t, ...(sl.h ? { h: sl.h } : {}), ...(isStay(sl) ? { d2: ymd(sl.d2), ah: sl.ah, bh: sl.bh } : {}) });
+const slotFromJson = (j) => (j && j.d ? { d: parseYmd(j.d), t: j.t || 0, ...(j.h ? { h: j.h } : {}), ...(j.d2 ? { d2: parseYmd(j.d2), ah: j.ah, bh: j.bh } : {}) } : null);
+// Deux créneaux se chevauchent : jours communs, et horaires communs si tous deux en ont.
+function slotsOverlap(a, b) {
+  if (a.d > slotEnd(b) || b.d > slotEnd(a)) return false;
+  const ha = slotTimes(a), hb = slotTimes(b);
+  return !ha || !hb || (ha[0] < hb[1] && hb[0] < ha[1]);
+}
 
 function daysPhrase(ws) {
   const key = ws.join('');
@@ -227,12 +253,19 @@ function daysPhrase(ws) {
   if (run && ws.length >= 3) return `du ${WD_LONG[ws[0]]} au ${WD_LONG[ws[ws.length - 1]]}`;
   return 'le ' + list(ws.map((w) => WD_LONG[w]));
 }
-// Les règles d'un sondage en phrases : « Soir · en semaine », « Midi et soir · le week-end ».
-function rulesLines(m) {
+// Les règles d'un sondage en phrases : « Soir · en semaine », « Midi et soir · le week-end », « 19 h – 21 h · en semaine ».
+function rulesLines(m, names = MOMENTS.map((x) => x.toLowerCase())) {
   const groups = new Map();
   m.forEach((mask, w) => { if (mask) groups.set(mask, (groups.get(mask) || []).concat(w)); });
   return [...groups].sort((a, b) => a[1][0] - b[1][0]).map(([mask, ws]) =>
-    cap(list(MOMENTS.filter((_, t) => mask & (1 << t)).map((x) => x.toLowerCase()))) + ' · ' + daysPhrase(ws));
+    cap(list(names.filter((_, t) => mask & (1 << t)))) + ' · ' + daysPhrase(ws));
+}
+function pollRulesText(st) {
+  if (st.k === 'j') {
+    const n = st.j.length;
+    return st.jr && st.jr[0] === 's' ? `${plural(n, 'semaine')} proposée${n > 1 ? 's' : ''}` : `${plural(n, 'week-end')} proposé${n > 1 ? 's' : ''}`;
+  }
+  return rulesLines(st.m, st.k === 'h' ? st.h.map(rangeText) : undefined).join(' ; ');
 }
 
 // Pour chaque créneau : y dispos, mb si besoin, tot = les deux ; missing = indispensables qui ont répondu « pas dispo ».
@@ -283,6 +316,11 @@ function slotCal(slots, pillHTML, opts) {
   }, Object.assign({ has: (d) => byDay.has(d) }, opts));
 }
 
+// Les créneaux d'un sondage : le calendrier (une case par jour), ou une ligne par séjour.
+function slotsView(slots, pillHTML, opts) {
+  return slots.length && isStay(slots[0]) ? `<div class="stays">${slots.map((_, i) => pillHTML(i)).join('')}</div>` : slotCal(slots, pillHTML, opts);
+}
+
 /* ---------- État ---------- */
 let view = null;      // 'home' | 'create' | 'edit' | 'poll' | 'pin' | 'deleted' | 'loading' | 'error' | 'account' | 'privacy' | 'legal'
 let lastRoute = null;
@@ -308,8 +346,22 @@ function newDraft() {
   return {
     t: '', n: '', l: '', ic: '',
     s: todayDay + 1, e: todayDay + 28,
-    m: [SOIR, SOIR, SOIR, SOIR, SOIR, SOIR, SOIR],
-    o: new Map(), // jours réglés à part : jour → ses moments (0 = jour exclu) ; les autres suivent les règles
+    touched: false, // période choisie à la main : le genre de créneaux ne la change plus
+    fmt: null,      // genre de créneaux (FORMATS), choisi par une tuile
+    // Séjours : curseur en demi-journées (s = première, e = juste après la dernière), ponts des week-ends fériés.
+    span: { weekend: { s: 4, e: 8 }, semaine: { s: 0, e: 14 } },
+    ponts: true,
+    days: { journee: [5, 6], heure: [0, 1, 2, 3, 4] }, // jours de la semaine choisis
+    // Tableaux jours × moments : pour chaque jour de la semaine (0 = lundi), ses moments (indices de MOMENTS).
+    grid: {
+      demi: [[], [], [], [], [], [3], [3]],
+      repas: [[4], [4], [4], [4], [4], [4], [4]],
+      libre: [[4], [4], [4], [4], [4], [4], [4]],
+    },
+    ranges: [['19:00', '21:00']], // horaires précis
+    // Retouches de l'aperçu : séjour (ancrage → forme ou retrait) et jour (jour → ses créneaux, [] = exclu).
+    bandEdits: { semaine: new Map(), weekend: new Map() },
+    dayEdits: { journee: new Map(), demi: new Map(), repas: new Map(), heure: new Map(), libre: new Map() },
     pin: '',
     dl: null,     // date limite de réponse (numéro de jour) ou null
     q: 0,         // nombre minimum de personnes, 0 = pas de minimum
@@ -361,8 +413,9 @@ function avatarHTML(name, extra = '') {
 function pollCardHTML(p) {
   const s = parseYmd(p.s), e = parseYmd(p.e);
   const dd = p.dd ? parseYmd(p.dd) : NaN;
-  const tag = Number.isFinite(dd)
-    ? `<span class="tag ok">${icon('check', 14)}${esc(fmt(fShort, dd))} · ${MOMENTS[p.dt || 0].toLowerCase()}</span>`
+  const chosen = slotFromJson(p.ds) || (Number.isFinite(dd) ? { d: dd, t: p.dt || 0 } : null);
+  const tag = chosen
+    ? `<span class="tag ok">${icon('check', 14)}${esc(slotShort(chosen))}</span>`
     : p.closed ? '<span class="tag">Clôturé</span>'
       : p.todo ? '<span class="tag hot">À répondre</span>'
         : `<span class="tag">${plural(p.n || 0, 'réponse')}</span>`;
@@ -699,7 +752,7 @@ async function loadHomePolls(mine) {
     const local = new Map(mine.map((p) => [p.id, p]));
     const remote = polls.map((p) => ({
       id: p.i, t: p.t, ic: p.ic, s: p.s, e: p.e, n: p.answers, own: p.owner, closed: p.closed,
-      dd: p.dd || '', dt: p.dt || 0, todo: !p.answered && !p.owner && !p.closed && !p.dd,
+      dd: p.dd || '', dt: p.dt || 0, ds: p.ds || null, todo: !p.answered && !p.owner && !p.closed && !p.dd,
       seen: (local.get(p.i) || {}).seen || 0,
     }));
     const ids = new Set(remote.map((p) => p.id));
@@ -710,22 +763,491 @@ async function loadHomePolls(mine) {
   } catch (e) { /* la liste locale reste affichée */ }
 }
 
-/* ---------- Vue : création et modification (3 étapes) ---------- */
-const STEPS = ['Le programme', 'Les créneaux', 'Les options'];
+/* ---------- Vue : création et modification (4 étapes) ---------- */
+const STEPS = ['Le programme', 'Les créneaux', 'L’aperçu', 'Les options'];
 // « Nombre minimum de personnes » masqué pour simplifier ; un sondage qui a déjà un minimum (q) le garde et l'affiche.
 const ASK_MINIMUM = false;
-const FORMULES = [
-  { label: 'Tous les soirs', sub: '7 jours sur 7', m: [SOIR, SOIR, SOIR, SOIR, SOIR, SOIR, SOIR] },
-  { label: 'Soirs de semaine', sub: 'Du lundi au vendredi', m: [SOIR, SOIR, SOIR, SOIR, SOIR, 0, 0] },
-  { label: 'Week-end', sub: 'Midi et soir', m: [0, 0, 0, 0, 0, MIDI | SOIR, MIDI | SOIR] },
-  { label: 'Vendredi et samedi soir', sub: 'Pour sortir', m: [0, 0, 0, 0, SOIR, SOIR, 0] },
-  { label: 'Midis en semaine', sub: 'Pause déjeuner', m: [MIDI, MIDI, MIDI, MIDI, MIDI, 0, 0] },
-  { label: 'Brunch du week-end', sub: 'Samedi et dimanche matin', m: [0, 0, 0, 0, 0, 2, 2] },
-  { label: 'Aprèm du week-end', sub: 'Jeux, balade, ciné', m: [0, 0, 0, 0, 0, APREM, APREM] },
-  { label: 'Journées du week-end', sub: 'Rando, sortie, escapade', m: [0, 0, 0, 0, 0, JOURNEE, JOURNEE] },
+// Genres de créneaux, une tuile chacun : toucher une tuile ouvre ses réglages juste dessous, sur la même page.
+// La question porte sur la durée (« Ça dure combien de temps ? »), du plus court au plus long, le repas d'abord :
+// « Week-end » seul se lisait « des créneaux le week-end », d'où « (prolongé ?) ». Les jours se choisissent dans les réglages.
+// Une semaine ou un week-end est un séjour sur plusieurs jours ; les autres genres tiennent dans une journée.
+// « Sur mesure » : sondage d'avant les genres, qui mêle des moments ; il n'apparaît que pour le modifier.
+const FORMATS = [
+  { k: 'repas', label: 'Un repas', ic: '🍽️' },
+  { k: 'heure', label: 'Quelques heures', ic: '🕒' },
+  { k: 'demi', label: 'Une demi-journée', ic: '🌤️' },
+  { k: 'journee', label: 'Une journée', ic: '☀️' },
+  { k: 'weekend', label: 'Un week-end (prolongé\u00a0?)', ic: '🧳', stay: true, one: 'week-end', many: 'week-ends' },
+  { k: 'semaine', label: 'Une semaine', ic: '🏖️', stay: true, one: 'semaine', many: 'semaines', fem: true },
 ];
-const SPANS = [['2 semaines', 14], ['1 mois', 28], ['2 mois', 56], ['3 mois', MAX_DAYS]];
+const FM = Object.fromEntries(FORMATS.concat([{ k: 'libre', label: 'Sur mesure', ic: '🧩' }]).map((f) => [f.k, f]));
+const FORMAT_TITLE = {
+  semaine: 'Quelles semaines&nbsp;?', weekend: 'Quels week-ends&nbsp;?', journee: 'Quelles journées&nbsp;?',
+  demi: 'Quelles demi-journées&nbsp;?', repas: 'Quels repas&nbsp;?', heure: 'À quelle heure&nbsp;?', libre: 'Quels moments&nbsp;?',
+};
+const FORMAT_SPAN = { semaine: MAX_DAYS, weekend: 56 }; // période proposée d'office ; 4 semaines pour les autres genres
+const SPANS_STAY = [['1 mois', 28], ['2 mois', 56], ['3 mois', MAX_DAYS]];
+const SPANS_DAY = [['2 semaines', 14], ['1 mois', 28], ['2 mois', 56], ['3 mois', MAX_DAYS]];
+const DAY_PRESETS = { we: ['Le week-end', [5, 6]], sem: ['En semaine', [0, 1, 2, 3, 4]], all: ['Tous les jours', [0, 1, 2, 3, 4, 5, 6]] };
+// Tableaux jours × moments : les moments (indices de MOMENTS) proposés par chaque genre.
+const GRID_ROWS = { demi: [1, 3], repas: [2, 4], libre: [0, 1, 2, 3, 4] };
+const isGrid = (f) => !!GRID_ROWS[f];
+const isStayFmt = (f) => !!(f && FM[f].stay);
+// Curseur d'un séjour : les jours de la semaine qu'il couvre (0 = lundi), coupés en deux moitiés. Le week-end va du jeudi
+// au mardi ; la semaine court sur deux semaines de suite, pour aller par exemple d'un samedi au samedi suivant.
+const SPAN_DAYS = { weekend: [3, 4, 5, 6, 0, 1], semaine: [0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6] };
+// Raccourcis qui placent les deux poignées d'un coup : [libellé, début, fin] en demi-journées sur le curseur.
+const SPAN_PRESETS = {
+  weekend: [['Samedi → dimanche', 4, 8], ['Vendredi soir → dimanche', 3, 8], ['Vendredi soir → lundi', 3, 10]],
+  semaine: [['Lundi → dimanche', 0, 14], ['Samedi → samedi', 11, 25], ['Lundi → vendredi', 0, 10]],
+};
+const WD_1 = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+const halfWord = (f) => (f === 'weekend' ? 'soir' : 'après-midi');
+const validRange = (r) => /^\d\d:\d\d$/.test(r[0]) && /^\d\d:\d\d$/.test(r[1]) && r[0] < r[1];
+const rangeKeyText = (k) => rangeText(k.split('-').map((x) => x.replace(':', '')));
+const chipHTML = (act, k, label, on) => `<button type="button" class="chip" data-act="${act}" data-k="${k}" aria-pressed="${on}">${label}</button>`;
+const periodOk = () => Number.isFinite(draft.s) && Number.isFinite(draft.e) && draft.e >= draft.s && draft.e - draft.s < MAX_DAYS;
 
+/* Séjours (semaine, week-end). Un séjour va du jour a au jour b ; ah = 1 : arrivée l'après-midi ou le soir ; bh = 0 : départ le matin.
+   Point d'ancrage : le samedi du week-end, le lundi de la semaine. Il ne bouge pas avec le curseur : un séjour retouché le reste.
+   Les ponts : un vendredi ou un lundi férié allonge le week-end ; un jeudi ou un mardi férié fait le pont. */
+function bandShape(dr, f, d, ponts) {
+  const { s, e } = dr.span[f], day0 = f === 'weekend' ? d - 2 : d;
+  let a = day0 + (s >> 1), ah = s & 1, b = day0 + ((e - 1) >> 1), bh = (e - 1) & 1, why = '';
+  if (f !== 'weekend') return { anchor: d, a, ah, b, bh, why };
+  const thu = holiday(d - 2), fri = holiday(d - 1), mon = holiday(d + 2), tue = holiday(d + 3);
+  const touches = !!(thu || fri || mon || tue);
+  if (ponts && touches) {
+    const na = thu ? d - 2 : fri ? d - 1 : null, nb = tue ? d + 3 : mon ? d + 2 : null;
+    if (na !== null && (na < a || (na === a && ah))) { a = na; ah = 0; }
+    if (nb !== null && (nb > b || (nb === b && !bh))) { b = nb; bh = 1; }
+    why = thu ? thu + ', pont' : fri || (tue ? tue + ', pont' : mon);
+  }
+  return { anchor: d, a, ah, b, bh, why, touches };
+}
+function ruleBands(dr, f, ponts) {
+  const out = [];
+  if (!(Number.isFinite(dr.s) && Number.isFinite(dr.e) && dr.e >= dr.s && dr.e - dr.s < MAX_DAYS)) return out;
+  if (f === 'weekend') {
+    for (let d = dr.s + ((5 - weekday(dr.s) + 7) % 7); d <= dr.e; d += 7) out.push(bandShape(dr, f, d, ponts));
+  } else {
+    for (let m = dr.s - weekday(dr.s); m <= dr.e; m += 7) { const b = bandShape(dr, f, m, false); if (b.a >= dr.s && b.a <= dr.e) out.push(b); }
+  }
+  return out;
+}
+// Séjours de la règle, avec leurs retouches de l'aperçu (own : réglé à part ; removed : retiré).
+function bandList(dr = draft) {
+  const f = dr.fmt, ed = dr.bandEdits[f];
+  return ruleBands(dr, f, f === 'weekend' && dr.ponts).map((r) => {
+    const x = ed.get(r.anchor);
+    if (!x) return Object.assign({}, r, { rule: r });
+    const own = !!x.removed || x.a !== r.a || x.ah !== r.ah || x.b !== r.b || x.bh !== r.bh;
+    return Object.assign({}, r, x, { rule: r, own });
+  });
+}
+function putBand(b) {
+  const r = b.rule, ed = draft.bandEdits[draft.fmt];
+  if (!b.removed && b.a === r.a && b.ah === r.ah && b.b === r.b && b.bh === r.bh) ed.delete(b.anchor);
+  else ed.set(b.anchor, { a: b.a, ah: b.ah, b: b.b, bh: b.bh, removed: !!b.removed });
+}
+const stayWords = (f) => (FM[f].fem ? { ce: 'cette', gone: 'retirée', gones: 'retirées' } : { ce: 'ce', gone: 'retiré', gones: 'retirés' });
+const bandText = (b) => stayText({ d: b.a, ah: b.ah, d2: b.b, bh: b.bh }, halfWord(draft.fmt));
+const bandLength = (b) => stayLength({ d: b.a, d2: b.b });
+
+// Le curseur en mots : « Du vendredi soir au dimanche soir ».
+const spanStart = (f, s) => WD_LONG[SPAN_DAYS[f][s >> 1]] + (s & 1 ? ' ' + halfWord(f) : ' matin');
+function spanEnd(f, s, e) {
+  const days = SPAN_DAYS[f], i = s >> 1, j = (e - 1) >> 1;
+  return WD_LONG[days[j]] + ((e - 1) & 1 ? ' soir' : ' matin') + (j >= 7 && days[j] <= days[i] ? ' suivant' : '');
+}
+const spanText = (f) => { const { s, e } = draft.span[f]; return `Du ${spanStart(f, s)} au ${spanEnd(f, s, e)}`; };
+const spanLength = (f) => { const { s, e } = draft.span[f]; return stayLength({ d: s >> 1, d2: (e - 1) >> 1 }); };
+function spanHTML(f) {
+  const { s, e } = draft.span[f], days = SPAN_DAYS[f], n = days.length * 2, of = f === 'weekend' ? 'du week-end' : 'de la semaine';
+  return `<fieldset class="field"><legend>Début et fin ${of}</legend>
+    <div class="chips">${SPAN_PRESETS[f].map(([label, s0, e0]) => chipHTML('span-preset', `${s0}-${e0}`, label, s === s0 && e === e0)).join('')}</div>
+    <div class="sp" style="--n:${n};--days:${days.length};--s:${s};--e:${e}">
+      <div class="sp-days" style="grid-template-columns:repeat(${days.length}, minmax(0, 1fr))" aria-hidden="true">${days.map((w, i) =>
+        `<span${i >= s >> 1 && i <= (e - 1) >> 1 ? ' class="on"' : ''}>${f === 'semaine' ? WD_1[w] : WD[w]}</span>`).join('')}</div>
+      <div class="sp-track"><span class="sp-fill"></span>
+        <input type="range" id="sp-a" min="0" max="${n}" step="1" value="${s}" aria-label="Début ${of}" aria-valuetext="${spanStart(f, s)}"${s > n / 2 ? ' class="top"' : ''}>
+        <input type="range" id="sp-b" min="0" max="${n}" step="1" value="${e}" aria-label="Fin ${of}" aria-valuetext="${spanEnd(f, s, e)}">
+      </div>
+    </div>
+    <p class="sp-text" id="sp-text" aria-live="polite"><b>${spanText(f)}</b> · ${spanLength(f)}</p>
+  </fieldset>`;
+}
+// Pendant qu'on fait glisser une poignée : le curseur se repeint sur place, sans tout redessiner (le geste continuerait dans le vide).
+function paintSpan() {
+  const f = draft.fmt, sp = $('.sp');
+  if (!sp) return;
+  const { s, e } = draft.span[f], n = SPAN_DAYS[f].length * 2;
+  sp.style.setProperty('--s', s);
+  sp.style.setProperty('--e', e);
+  sp.querySelectorAll('.sp-days span').forEach((el, i) => el.classList.toggle('on', i >= s >> 1 && i <= (e - 1) >> 1));
+  $('#sp-a').setAttribute('aria-valuetext', spanStart(f, s));
+  $('#sp-a').classList.toggle('top', s > n / 2);
+  $('#sp-b').setAttribute('aria-valuetext', spanEnd(f, s, e));
+  $('#sp-text').innerHTML = `<b>${spanText(f)}</b> · ${spanLength(f)}`;
+  document.querySelectorAll('[data-act="span-preset"]').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.k === `${s}-${e}`)));
+  paintCreate();
+}
+
+/* Créneaux d'un jour (journée, demi-journée, repas, horaire précis). Une clé par créneau : l'indice du moment dans MOMENTS,
+   ou « HH:MM-HH:MM » pour un horaire précis. Les jours réglés à part dans l'aperçu gardent leurs clés (dayEdits). */
+function chosenKeys(f) {
+  if (f === 'journee') return [0];
+  if (isGrid(f)) { const u = new Set(draft.grid[f].flat()); return GRID_ROWS[f].filter((t) => u.has(t)); }
+  return [...new Set(draft.ranges.filter(validRange).map((r) => r.join('-')))].sort();
+}
+function optionsOf(f, extra = []) {
+  if (f === 'journee') return [{ k: 0, label: 'Toute la journée' }];
+  if (isGrid(f)) return GRID_ROWS[f].map((t) => ({ k: t, label: MOMENTS[t] }));
+  return [...new Set(chosenKeys('heure').concat(extra))].sort().map((k) => ({ k, label: rangeKeyText(k) }));
+}
+const optLabel = (f, k) => (f === 'heure' ? rangeKeyText(k) : f === 'journee' ? 'toute la journée' : MOMENTS[k].toLowerCase());
+const orderKeys = (f, keys) => (f === 'heure' ? [...new Set(keys)].sort() : MOMENTS.map((_, t) => t).filter((t) => keys.includes(t)));
+// « Journée » couvre tout le jour : elle remplace les autres moments, et en choisir un autre la retire.
+const addKey = (keys, k) => (k === 0 ? [0] : keys.filter((x) => x !== 0).concat(k));
+const ruleKeys = (d) => {
+  const f = draft.fmt;
+  return isGrid(f) ? orderKeys(f, draft.grid[f][weekday(d)]) : draft.days[f].includes(weekday(d)) ? chosenKeys(f) : [];
+};
+const dayKeys = (d) => { const ed = draft.dayEdits[draft.fmt]; return ed.has(d) ? ed.get(d) : ruleKeys(d); };
+const sameKeys = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
+function setDayKeys(d, keys) {
+  const k = orderKeys(draft.fmt, keys);
+  if (sameKeys(k, ruleKeys(d))) draft.dayEdits[draft.fmt].delete(d); else draft.dayEdits[draft.fmt].set(d, k);
+}
+// Le tableau en phrases, comme les règles d'un sondage : « Midi et soir · le samedi ».
+function gridLines(f) {
+  const groups = new Map();
+  draft.grid[f].forEach((keys, w) => {
+    const key = orderKeys(f, keys).join();
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(w);
+  });
+  return [...groups].sort((a, b) => a[1][0] - b[1][0]).map(([key, ws]) =>
+    cap(list(key.split(',').map((t) => MOMENTS[+t].toLowerCase()))) + ' · ' + daysPhrase(ws));
+}
+// Jours fériés de la période ; missing : hors des jours choisis et pas encore réglés ; opened : ajoutés depuis l'encadré.
+function dayHols() {
+  const f = draft.fmt, all = [];
+  if (periodOk()) for (let d = draft.s; d <= draft.e; d++) { const name = holiday(d); if (name) all.push({ d, name }); }
+  return {
+    all,
+    missing: all.filter((h) => !ruleKeys(h.d).length && !draft.dayEdits[f].has(h.d)),
+    opened: all.filter((h) => !ruleKeys(h.d).length && (draft.dayEdits[f].get(h.d) || []).length),
+  };
+}
+// Horaires précis : toutes les plages utilisées, celles des réglages et celles ajoutées à un jour de l'aperçu.
+const heureKeys = () => [...new Set(chosenKeys('heure').concat([...draft.dayEdits.heure.values()].flat()))].sort();
+
+function ruleText() {
+  const f = draft.fmt;
+  if (f === 'weekend') return spanText(f) + (draft.ponts ? ', ponts compris' : '');
+  if (f === 'semaine') return spanText(f);
+  if (isGrid(f)) return gridLines(f).join(' ; ') || 'Rien de choisi';
+  const ws = draft.days[f].slice().sort((a, b) => a - b), days = ws.length ? daysPhrase(ws) : 'aucun jour';
+  if (f === 'journee') return 'Toute la journée · ' + days;
+  const what = chosenKeys('heure').map(rangeKeyText);
+  return (what.length ? cap(list(what)) : 'Rien de choisi') + ' · ' + days;
+}
+
+// Vérifie le brouillon. step : l'étape où se corrige l'erreur (on ne bloque pas les étapes d'avant).
+// quiet : pas encore de genre choisi, rien à signaler.
+function draftCheck() {
+  const f = draft.fmt, { s, e } = draft;
+  if (!f) return { err: 'Choisissez un genre de créneaux.', step: 2, quiet: true };
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return { err: 'Choisissez une date de début et une date de fin.', step: 2 };
+  if (e < s) return { err: 'La date de fin doit être après la date de début.', step: 2 };
+  if (e - s >= MAX_DAYS) return { err: 'Période trop longue : 3 mois maximum.', step: 2 };
+  let out;
+  if (isStayFmt(f)) {
+    const lst = bandList(), on = lst.filter((b) => !b.removed);
+    out = { stay: true, list: lst, n: on.length, removed: lst.length - on.length, slots: on.length };
+    if (!lst.length) return Object.assign(out, { err: f === 'weekend' ? 'Aucun week-end sur cette période : allongez-la.' : 'Aucune semaine ne commence sur cette période : allongez-la.', step: 2 });
+    if (!on.length) return Object.assign(out, { err: f === 'weekend' ? 'Tous les week-ends sont retirés : remettez-en au moins un.' : 'Toutes les semaines sont retirées : remettez-en au moins une.', step: 3 });
+  } else {
+    if (isGrid(f) && !draft.grid[f].some((keys) => keys.length)) return { err: 'Cochez au moins une case du tableau.', step: 2 };
+    if (f === 'heure' && !draft.ranges.length) return { err: 'Ajoutez au moins un horaire.', step: 2 };
+    if (f === 'heure' && !draft.ranges.every(validRange)) return { err: 'Chaque horaire doit finir après son début.', step: 2 };
+    if (!isGrid(f) && !draft.days[f].length) return { err: 'Choisissez au moins un jour de la semaine.', step: 2 };
+    let slots = 0, days = 0;
+    for (let d = s; d <= e; d++) { const n = dayKeys(d).length; if (n) { days++; slots += n; } }
+    out = { slots, days };
+    if (f === 'heure' && heureKeys().length > MAX_RANGES) return Object.assign(out, { err: `${MAX_RANGES} horaires différents au plus, ajouts de l’aperçu compris.`, step: 3 });
+    if (!slots) return Object.assign(out, { err: 'Aucun créneau : ajoutez au moins un jour.', step: 3 });
+    if (slots > MAX_SLOTS) return Object.assign(out, { err: `Trop de créneaux (${slots}). Réduisez la période ou le nombre de jours (${MAX_SLOTS} maximum).`, step: 2 });
+  }
+  if (draft.dl != null) {
+    if (!Number.isFinite(draft.dl)) return Object.assign(out, { err: 'Date limite de réponse invalide.', step: 4 });
+    if (draft.dl > e) return Object.assign(out, { err: 'La date limite de réponse doit tomber avant la fin de la période.', step: 4 });
+  }
+  if (auth.user && draft.pin && !/^\d{4,6}$/.test(draft.pin)) return Object.assign(out, { err: 'Le code d’accès doit faire 4 à 6 chiffres.', step: 4 });
+  return out;
+}
+
+/* ---------- Étape 2 : le genre de créneaux et ses réglages, sur la même page ---------- */
+function creneauxHTML() {
+  return `<h2>Ça dure combien de temps&nbsp;?</h2>
+    <div class="tiles">${FORMATS.concat(draft.fmt === 'libre' ? [FM.libre] : []).map((f) =>
+      `<button type="button" class="tile" data-act="fmt" data-k="${f.k}" aria-pressed="${draft.fmt === f.k}"><span class="tile-ic" aria-hidden="true">${f.ic}</span><span>${f.label.replace(/(\S+-\S+)/g, '<span class="nowrap">$1</span>')}</span></button>`).join('')}</div>
+    ${draft.fmt ? '' : '<p class="hint">Vous choisirez les jours juste après&nbsp;: en semaine, le week-end…</p>'}
+    ${draft.fmt ? `<section class="settings" id="reglages" aria-labelledby="reglages-titre">${settingsHTML()}</section>` : ''}`;
+}
+function spansHTML() {
+  const len = draft.e - draft.s + 1;
+  return (isStayFmt(draft.fmt) ? SPANS_STAY : SPANS_DAY).map(([label, n]) =>
+    `<button type="button" class="chip" data-act="span" data-n="${n}" aria-pressed="${len === n}">${label}</button>`).join('');
+}
+function periodHTML() {
+  return `<fieldset class="field"><legend>Sur quelle période&nbsp;?</legend>
+    <div class="chips" id="c-spans">${spansHTML()}</div>
+    <div class="dates">
+      <label for="c-start">Du<input type="date" id="c-start" value="${Number.isFinite(draft.s) ? ymd(draft.s, '-') : ''}"${wiz.editing ? '' : ` min="${ymd(todayDay, '-')}"`}></label>
+      <label for="c-end">Au<input type="date" id="c-end" value="${Number.isFinite(draft.e) ? ymd(draft.e, '-') : ''}"></label>
+    </div>
+  </fieldset>`;
+}
+function pontsListHTML() {
+  const touching = ruleBands(draft, 'weekend', true).filter((b) => b.touches);
+  if (!touching.length) return '<p class="hint">Aucun jour férié ne touche un week-end sur cette période.</p>';
+  return `<div class="hols"><p>${touching.length > 1 ? `${touching.length} week-ends touchent` : 'Un week-end touche'} un jour férié sur la période&nbsp;:</p>
+    <ul class="hol-list">${touching.map((b) => `<li><b>${esc(b.why.replace(', pont', '') || holiday(b.anchor - 1) || holiday(b.anchor + 2) || holiday(b.anchor - 2) || holiday(b.anchor + 3))}</b> ${draft.ponts
+      ? esc(bandText(b)) + (b.why.includes('pont') ? ', avec le pont' : '') : 'non prolongé'}</li>`).join('')}</ul></div>`;
+}
+function daysHTML() {
+  const ws = draft.days[draft.fmt], key = ws.slice().sort((a, b) => a - b).join();
+  return `<fieldset class="field"><legend>Quels jours de la semaine&nbsp;?</legend>
+    <div class="chips">${Object.entries(DAY_PRESETS).map(([k, [label, v]]) => chipHTML('preset', k, label, key === v.join())).join('')}</div>
+    <div class="wdays">${WD.map((w, i) => `<button type="button" class="wd" data-act="wd" data-w="${i}" aria-pressed="${ws.includes(i)}" aria-label="${WD_LONG[i]}">${w}</button>`).join('')}</div>
+  </fieldset>`;
+}
+function gridHTML(f) {
+  const g = draft.grid[f], active = g.map((keys, w) => (keys.length ? w : -1)).filter((w) => w >= 0).join();
+  return `<fieldset class="field"><legend>Quels jours, quels moments&nbsp;?</legend>
+    <div class="chips">${Object.entries(DAY_PRESETS).map(([k, [label, v]]) => chipHTML('preset', k, label, active === v.join())).join('')}</div>
+    <div class="matrix"><span></span>${WD.map((d, w) =>
+      `<button type="button" class="mx-h" data-act="mx-col" data-w="${w}" aria-label="${WD_LONG[w]} : tout cocher ou décocher">${d}</button>`).join('')}
+    ${GRID_ROWS[f].map((t) =>
+      `<button type="button" class="mx-h row" data-act="mx-row" data-k="${t}" aria-label="${MOMENTS[t]} : tout cocher ou décocher">${MOMENTS[t]}</button>`
+      + WD.map((d, w) => `<button type="button" class="mx-c" data-act="mx-cell" data-k="${t}" data-w="${w}" aria-pressed="${g[w].includes(t)}" aria-label="${MOMENTS[t]}, ${WD_LONG[w]}"></button>`).join('')).join('')}</div>
+    <ul class="rules" aria-live="polite">${gridLines(f).map((l) => `<li>${icon('check', 14)}${esc(l)}</li>`).join('')}</ul>
+  </fieldset>`;
+}
+function rangesHTML() {
+  return `<fieldset class="field"><legend>Horaires</legend>
+    <ul class="ranges">${draft.ranges.map((r, i) => `<li class="range">
+      <label for="r-a-${i}">De<input type="time" id="r-a-${i}" data-ri="${i}" data-rp="0" value="${r[0]}" step="900"></label>
+      <label for="r-b-${i}">à<input type="time" id="r-b-${i}" data-ri="${i}" data-rp="1" value="${r[1]}" step="900"></label>
+      ${draft.ranges.length > 1 ? `<button type="button" class="iconbtn" data-act="range-del" data-i="${i}" aria-label="Retirer l’horaire ${i + 1}">${icon('x')}</button>` : ''}</li>`).join('')}</ul>
+    ${draft.ranges.length < 4 ? `<div><button type="button" class="btn sm" data-act="range-add">${icon('plus', 16)}Ajouter un horaire</button></div>` : ''}
+  </fieldset>`;
+}
+function holsHTML() {
+  const { all, missing, opened } = dayHols();
+  if (!all.length) return '';
+  const n = missing.length;
+  return `<p>${all.length > 1 ? 'Jours fériés' : 'Jour férié'} sur la période&nbsp;: ${all.map((h) =>
+    `<span class="nowrap"><b>${fmt(fShort, h.d)}</b> ${esc(h.name)}</span>`).join(' · ')}</p>
+    ${n ? `<p class="hol-act"><span>${n > 1 ? `${n} tombent` : all.length > 1 ? 'Un tombe' : 'Il tombe'} en dehors des jours choisis.</span>
+      <button type="button" class="btn sm" data-act="add-hols">${n > 1 ? `Ajouter ces ${n} jours` : 'L’ajouter au sondage'}</button></p>`
+    : opened.length ? `<p class="hol-act"><span>${opened.length > 1 ? `${opened.length} sont ajoutés` : 'Il est ajouté'} au sondage.</span>
+      <button type="button" class="btn sm quiet" data-act="del-hols">Revenir aux règles</button></p>` : ''}`;
+}
+function settingsHTML() {
+  const f = draft.fmt;
+  let h = `<h2 id="reglages-titre" tabindex="-1">${FORMAT_TITLE[f]}</h2>`;
+  if (f === 'weekend') {
+    return h + spanHTML(f) + periodHTML() + `<div class="field">
+      <label class="switch" for="c-ponts"><input type="checkbox" id="c-ponts"${draft.ponts ? ' checked' : ''}><span>Prolonger les week-ends fériés, ponts compris</span></label>
+      <div id="c-ponts-list">${pontsListHTML()}</div></div>`;
+  }
+  if (f === 'semaine') return h + spanHTML(f) + periodHTML();
+  if (isGrid(f)) h += gridHTML(f);
+  if (f === 'heure') h += rangesHTML();
+  if (!isGrid(f)) h += daysHTML();
+  const hols = holsHTML();
+  return h + periodHTML() + `<div class="hols${hols.includes('data-act="add-hols"') ? ' todo' : ''}" id="c-hols" aria-live="polite"${hols ? '' : ' hidden'}>${hols}</div>`;
+}
+
+/* ---------- Étape 3 : l'aperçu, à retoucher jour par jour ---------- */
+// Rappel du genre en tête de l'aperçu, sans la précision entre parenthèses de la tuile.
+const fmtNowHTML = () => `<div class="fmt-now"><span><b>${FM[draft.fmt].label.replace(/ \(.*\)$/, '')}</b><small>${esc(ruleText())}</small></span><button type="button" class="btn sm quiet" data-act="step" data-n="2">Modifier</button></div>`;
+function previewHTML(chk) {
+  const f = draft.fmt;
+  if (chk.err && chk.step === 2) return `<h2>Vérifiez les créneaux</h2>${fmtNowHTML()}<p class="notice">${icon('rules', 18)}<span>${esc(chk.err)}</span></p>`;
+  const stay = isStayFmt(f), w = stay ? stayWords(f) : null;
+  const count = stay ? `${plural(chk.n, FM[f].one, FM[f].many)}${chk.removed ? ` · ${chk.removed} ${chk.removed > 1 ? w.gones : w.gone}` : ''}`
+    : `${plural(chk.slots, 'créneau', 'créneaux')} sur ${plural(chk.days, 'jour')}`;
+  const tip = f === 'weekend' ? 'Touchez un week-end pour l’allonger, le raccourcir ou le retirer.'
+    : f === 'semaine' ? 'Touchez une semaine pour la décaler, l’allonger ou la retirer.'
+      : 'Touchez un jour pour changer ses créneaux, l’exclure ou l’ajouter.';
+  return `<h2>Vérifiez les créneaux</h2>
+    ${fmtNowHTML()}
+    <div class="field">
+      <div class="row-between"><span class="label">Aperçu</span><span class="count">${count}</span></div>
+      <p class="hint">${tip} Les jours fériés sont cerclés de violet.</p>
+      ${stay ? bandCalHTML(chk.list) : dayCalHTML()}
+      ${stay ? `<p class="legend"><span class="band"></span>proposé<span class="band own"></span>retouché<span class="band gone"></span>${w.gone}<span class="sw-hol"></span>jour férié</p>` : ''}
+    </div>`;
+}
+// Séjours : une ligne par semaine, chaque jour coupé en deux moitiés (14 colonnes) ; un séjour s'y dessine en bande.
+function bandCalHTML(lst) {
+  const first = Math.min(draft.s, ...lst.map((b) => b.a)), last = Math.max(draft.e, ...lst.map((b) => b.b));
+  const one = FM[draft.fmt].one, w = stayWords(draft.fmt);
+  const longest = new Map(); // le plus long morceau de chaque séjour porte son étiquette et reçoit le focus
+  const weeks = [];
+  for (let w0 = first - weekday(first); w0 <= last; w0 += 7) {
+    const segs = [];
+    for (const b of lst) {
+      const sa = b.a * 2 + b.ah, sb = b.b * 2 + b.bh, wa = w0 * 2, wb = w0 * 2 + 13;
+      if (sb < wa || sa > wb) continue;
+      const seg = { b, x0: Math.max(sa, wa) - wa, x1: Math.min(sb, wb) - wa, cutL: sa < wa, cutR: sb > wb };
+      const best = longest.get(b.anchor);
+      if (!best || seg.x1 - seg.x0 > best.x1 - best.x0) longest.set(b.anchor, seg);
+      segs.push(seg);
+    }
+    weeks.push({ w0, segs });
+  }
+  let h = `<div class="bcal"><div class="bhead">${WD.map((d) => `<span class="cal-wd">${d}</span>`).join('')}</div>`;
+  let month = null;
+  for (const { w0, segs } of weeks) {
+    const lastShown = Math.min(w0 + 6, last);
+    if (monthKey(lastShown) !== month) { h += `<div class="cal-month">${cap(fmt(fMonth, lastShown))}</div>`; month = monthKey(lastShown); }
+    segs.sort((p, q) => p.x0 - q.x0);
+    const lanes = [];
+    for (const sg of segs) {
+      let l = lanes.findIndex((end) => end < sg.x0);
+      if (l < 0) { l = lanes.length; lanes.push(-1); }
+      lanes[l] = sg.x1; sg.lane = l;
+    }
+    h += `<div class="bweek" style="grid-template-rows:auto repeat(${Math.max(1, lanes.length)}, 30px)">`;
+    for (let i = 0; i < 7; i++) {
+      const d = w0 + i, col = `grid-column:${i * 2 + 1} / span 2`;
+      if (d < first || d > last) { h += `<span class="bday void" style="${col}"></span>`; continue; }
+      const hol = holiday(d);
+      h += `<span class="bday${d >= draft.s && d <= draft.e ? ' in' : ''}${hol ? ' hol' : ''}${d === todayDay ? ' today' : ''}" style="${col}"${hol ? ` title="${esc(hol)}"` : ''}>${dateOf(d)}</span>`;
+    }
+    for (const sg of segs) {
+      const b = sg.b, main = longest.get(b.anchor) === sg;
+      const label = b.removed ? w.gone : b.why || plural(b.b - b.a, 'nuit');
+      const aria = `Modifier ${w.ce} ${one} : ${bandText(b)}${b.why ? ', ' + b.why : ''}${b.removed ? ', ' + w.gone : b.own ? ', réglé à part' : ''}`;
+      h += `<button type="button" class="band${b.removed ? ' gone' : ''}${b.own && !b.removed ? ' own' : ''}${sg.cutL ? ' cut-l' : ''}${sg.cutR ? ' cut-r' : ''}" style="grid-column:${sg.x0 + 1} / ${sg.x1 + 2};grid-row:${sg.lane + 2}" data-act="band" data-k="${b.anchor}"${main ? ` aria-label="${esc(aria)}" aria-haspopup="dialog"` : ' tabindex="-1" aria-hidden="true"'}>${main && sg.x1 - sg.x0 >= 2 ? esc(label) : ''}</button>`;
+    }
+    h += '</div>';
+  }
+  return h + '</div>';
+}
+function dayCalHTML() {
+  const f = draft.fmt;
+  return calGrid(draft.s, draft.e, [0, 1, 2, 3, 4, 5, 6], (d) => {
+    const keys = dayKeys(d), rule = ruleKeys(d), own = !sameKeys(keys, rule), hol = holiday(d);
+    const state = keys.length ? (own ? 'on own' : 'on') : rule.length ? 'ex' : 'off';
+    const said = keys.length ? keys.map((k) => optLabel(f, k)).join(', ') + (own ? ', réglé à part' : '') : rule.length ? 'exclu' : 'non proposé';
+    return `<button type="button" class="day pv ${state}${hol ? ' hol' : ''}" data-act="day" data-d="${d}" aria-haspopup="dialog" aria-label="${fmt(fLong, d)}${hol ? ', ' + esc(hol) : ''} : ${esc(said)}. Modifier"${hol ? ` title="${esc(hol)}"` : ''}><span class="day-n">${dateOf(d)}</span>${keys.length ? `<span class="dots">${'<i></i>'.repeat(keys.length)}</span>` : ''}</button>`;
+  });
+}
+
+/* ---------- Dialogue : retoucher un séjour ou un jour de l'aperçu ---------- */
+let cDlg = null, cDlgOpen = null; // { kind: 'band', anchor } ou { kind: 'day', d, extra: horaires ajoutés à ce jour }
+const curBand = () => bandList().find((b) => b.anchor === cDlgOpen.anchor);
+// Jours déjà pris par un autre séjour : on n'y étend pas celui-ci.
+function takenBy(anchor) {
+  const others = bandList().filter((o) => o.anchor !== anchor && !o.removed);
+  return (d) => others.some((o) => (d > o.a && d < o.b) || (d === o.a && !o.ah) || (d === o.b && o.bh) || (d === o.a && d === o.b));
+}
+function stripHTML(from, to, b, taken) {
+  let h = `<div class="strip" style="grid-template-columns:repeat(${(to - from + 1) * 2}, minmax(0, 1fr))">`;
+  for (let d = from; d <= to; d++) {
+    const on = d >= b.a && d <= b.b, hol = holiday(d), off = taken(d);
+    h += `<button type="button" class="sd${on ? ' on' : ''}${hol ? ' hol' : ''}" style="grid-column:${(d - from) * 2 + 1} / span 2" data-act="strip" data-d="${d}"${off ? ' disabled' : ''} aria-pressed="${on}" aria-label="${fmt(fLong, d)}${hol ? ', ' + esc(hol) : ''}${off ? ', déjà pris par un autre séjour' : ''}"${hol ? ` title="${esc(hol)}"` : ''}><small>${WD[weekday(d)]}</small><b>${dateOf(d)}</b></button>`;
+  }
+  const x0 = (b.a - from) * 2 + b.ah, x1 = (b.b - from) * 2 + b.bh;
+  return h + `<span class="band" style="grid-column:${x0 + 1} / ${x1 + 2}" aria-hidden="true"></span></div>`;
+}
+function paintCreateDlg() {
+  const f = draft.fmt;
+  if (cDlgOpen.kind === 'band') {
+    const b = curBand(), r = b.rule, w = stayWords(f), one = FM[f].one;
+    const from = Math.min(r.a, b.a) - 2, to = Math.max(r.b, b.b) + 2;
+    cDlg.innerHTML = `<h2 id="dlg-title">${esc(bandText(b))}</h2>
+      ${b.why ? `<p class="dlg-hol">${esc(b.why)}</p>` : ''}
+      ${b.removed ? `<p class="muted">${cap(w.ce)} ${one} est ${w.gone} du sondage.</p>` : `<p class="muted">Touchez un jour pour allonger ou raccourcir.</p>
+        ${stripHTML(from, to, b, takenBy(b.anchor))}
+        <div class="dlg-moments">
+          <button type="button" class="chip" data-act="b-ah" aria-pressed="${!!b.ah}">Arrivée ${f === 'weekend' ? 'le soir' : 'l’après-midi'}</button>
+          <button type="button" class="chip" data-act="b-bh" aria-pressed="${!b.bh}">Départ le matin</button></div>`}
+      <p class="hint" aria-live="polite">${b.removed ? '' : cap(bandLength(b)) + (b.own ? ' · réglé à part' : ` · comme les autres ${FM[f].many}`)}</p>
+      <div class="dlg-actions">
+        ${b.removed ? `<button type="button" class="btn sm primary" data-act="b-restore">Remettre ${w.ce} ${one}</button>`
+          : `<button type="button" class="btn sm quiet" data-act="b-remove">Retirer ${w.ce} ${one}</button>`}
+        ${b.own && !b.removed ? '<button type="button" class="btn sm quiet" data-act="b-reset">Revenir à la règle</button>' : ''}
+        <button type="button" class="btn sm${b.removed ? '' : ' primary'}" data-act="dlg-close">OK</button>
+      </div>`;
+    return;
+  }
+  const d = cDlgOpen.d, hol = holiday(d), keys = dayKeys(d), rule = ruleKeys(d), same = sameKeys(keys, rule);
+  const q = { journee: 'Proposer ce jour-là&nbsp;?', heure: 'Quels horaires proposer ce jour-là&nbsp;?', repas: 'Quels repas proposer ce jour-là&nbsp;?' }[f]
+    || 'Quels moments proposer ce jour-là&nbsp;?';
+  const state = same ? (rule.length ? `Comme les autres ${WD_LONG[weekday(d)]}s.` : 'Ce jour n’est pas proposé pour l’instant.')
+    : keys.length ? 'Réglé à part pour ce jour.' : 'Ce jour est exclu du sondage.';
+  cDlg.innerHTML = `<h2 id="dlg-title">${fmt(fLong, d)}</h2>
+    ${hol ? `<p class="dlg-hol">${esc(hol)}</p>` : ''}
+    <p class="muted">${q}</p>
+    <div class="dlg-moments">${optionsOf(f, f === 'heure' ? keys.concat([...cDlgOpen.extra]) : []).map((o) =>
+      `<button type="button" class="chip" data-act="day-t" data-k="${o.k}" aria-pressed="${keys.includes(o.k)}">${o.label}</button>`).join('')}</div>
+    ${f === 'heure' ? `<div class="range"><label for="d-a">Autre horaire, de<input type="time" id="d-a" value="12:00" step="900"></label>
+      <label for="d-b">à<input type="time" id="d-b" value="14:00" step="900"></label><button type="button" class="btn sm" data-act="day-add">Ajouter</button></div>` : ''}
+    <p class="hint" aria-live="polite">${state}</p>
+    <div class="dlg-actions">
+      ${keys.length ? '<button type="button" class="btn sm quiet" data-act="day-none">Retirer le jour</button>' : ''}
+      ${!same ? '<button type="button" class="btn sm quiet" data-act="day-reset">Revenir à la règle</button>' : ''}
+      <button type="button" class="btn sm primary" data-act="dlg-close">OK</button>
+    </div>`;
+}
+function openCreateDlg(o) {
+  if (!cDlg) {
+    cDlg = document.createElement('dialog');
+    cDlg.className = 'dlg';
+    cDlg.setAttribute('aria-labelledby', 'dlg-title');
+    document.body.appendChild(cDlg);
+    // Clic sur le fond (hors de la boîte) : on ferme.
+    cDlg.addEventListener('click', (ev) => {
+      if (ev.target !== cDlg) return;
+      const r = cDlg.getBoundingClientRect();
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) cDlg.close();
+    });
+    cDlg.addEventListener('close', () => {
+      const was = cDlgOpen;
+      cDlgOpen = null;
+      if (view !== 'create' && view !== 'edit') return;
+      paintCreate(true);
+      const back = was && (was.kind === 'band' ? $(`[data-act="band"][data-k="${was.anchor}"]:not([tabindex="-1"])`) : $(`[data-act="day"][data-d="${was.d}"]`));
+      if (back) back.focus({ preventScroll: true });
+    });
+  }
+  cDlgOpen = o;
+  paintCreateDlg();
+  cDlg.showModal();
+  const ok = cDlg.querySelector('[data-act="dlg-close"]');
+  if (ok) ok.focus();
+}
+function stripTap(d) {
+  const b = curBand(), taken = takenBy(b.anchor);
+  if (taken(d)) return;
+  if (d < b.a) { for (let x = d; x < b.a; x++) if (taken(x)) return; b.a = d; }
+  else if (d > b.b) { for (let x = b.b + 1; x <= d; x++) if (taken(x)) return; b.b = d; }
+  else if (d === b.a && b.a < b.b) b.a++;
+  else if (d === b.b && b.b > b.a) b.b--;
+  else return;
+  if (b.a === b.b && b.ah && !b.bh) b.ah = 0;
+  putBand(b);
+}
+
+/* ---------- Les étapes ---------- */
 function stepHTML() {
   if (wiz.step === 1) {
     return `<h2>C’est pour quoi&nbsp;?</h2>
@@ -734,30 +1256,8 @@ function stepHTML() {
       <div class="field"><label for="c-place">Lieu <span class="opt">(facultatif)</span></label><input type="text" id="c-place" maxlength="80" placeholder="Chez Julie" autocomplete="off"></div>
       <div class="field"><label for="c-note">Précisions <span class="opt">(facultatif)</span></label><input type="text" id="c-note" maxlength="160" placeholder="Chacun apporte un jeu ou un fromage" autocomplete="off"></div>`;
   }
-  if (wiz.step === 2) {
-    return `<h2>Quand est-ce possible&nbsp;?</h2>
-      <fieldset class="field"><legend>Sur quelle période&nbsp;?</legend>
-        <div class="chips" id="c-spans"></div>
-        <div class="dates">
-          <label for="c-start">Du<input type="date" id="c-start"></label>
-          <label for="c-end">Au<input type="date" id="c-end"></label>
-        </div>
-      </fieldset>
-      <fieldset class="field"><legend>Quels créneaux&nbsp;?</legend>
-        <div class="formules" id="c-formules"></div>
-      </fieldset>
-      <div class="field">
-        <span class="label">Ou composez vos règles, jour par jour</span>
-        <div class="matrix" id="c-matrix"></div>
-        <ul class="rules" id="c-rules" aria-live="polite"></ul>
-      </div>
-      <div class="hols" id="c-hols" aria-live="polite" hidden></div>
-      <div class="field">
-        <div class="row-between"><span class="label">Aperçu</span><span class="count" id="c-count"></span></div>
-        <p class="hint">Touchez un jour pour choisir ses moments&nbsp;: l’exclure (anniversaire, week-end déjà pris…), l’ajouter, ou lui donner d’autres créneaux que la règle. Les jours fériés sont cerclés.</p>
-        <div id="c-cal"></div>
-      </div>`;
-  }
+  if (wiz.step === 2 || !draft.fmt) return creneauxHTML();
+  if (wiz.step === 3) return previewHTML(draftCheck());
   return `<h2>Les règles du jeu</h2>
     <p class="muted">Tout est facultatif&nbsp;: vous pouvez créer le sondage tel quel.</p>
     <div class="field">
@@ -806,9 +1306,9 @@ function showCreate() {
       <h1>${wiz.editing ? 'Modifier le sondage' : 'Nouveau sondage'}</h1>
       ${wiz.editing ? '<p class="muted">Les dispos déjà données restent sur les créneaux conservés. Celles des créneaux retirés seront effacées.</p>' : ''}
       <ol class="steps">${STEPS.map((label, i) =>
-        `<li><button type="button" class="step${i + 1 < wiz.step ? ' done' : ''}" data-act="step" data-n="${i + 1}"${wiz.step === i + 1 ? ' aria-current="step"' : ''}><span class="step-n">${i + 1 < wiz.step ? icon('check', 14) : i + 1}</span>${label}</button></li>`).join('')}</ol>
+        `<li><button type="button" class="step${i + 1 < wiz.step ? ' done' : ''}" data-act="step" data-n="${i + 1}"${wiz.step === i + 1 ? ' aria-current="step"' : ''}${i + 1 > 2 && !draft.fmt ? ' disabled' : ''}><span class="step-n">${i + 1 < wiz.step ? icon('check', 14) : i + 1}</span>${label}</button></li>`).join('')}</ol>
     </header>
-    <section class="card wiz-body">${stepHTML()}</section>
+    <section class="card wiz-body" id="c-body">${stepHTML()}</section>
     <div class="wiz-foot">
       <p class="error" id="c-error" role="alert" hidden></p>
       <div class="wiz-bar">
@@ -824,179 +1324,31 @@ function showCreate() {
   </div>`;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   set('c-title', draft.t); set('c-place', draft.l); set('c-note', draft.n); set('c-pin', draft.pin);
-  set('c-start', Number.isFinite(draft.s) ? ymd(draft.s, '-') : '');
-  set('c-end', Number.isFinite(draft.e) ? ymd(draft.e, '-') : '');
   set('c-dl', draft.dl != null && Number.isFinite(draft.dl) ? ymd(draft.dl, '-') : '');
-  if (!wiz.editing && $('#c-start')) $('#c-start').min = ymd(todayDay, '-');
   paintCreate();
 }
 
-// Vérifie le brouillon. step : l'étape où se corrige l'erreur (on ne bloque pas les étapes d'avant).
-function draftCheck() {
-  const { s, e } = draft;
-  if (!Number.isFinite(s) || !Number.isFinite(e)) return { err: 'Choisissez une date de début et une date de fin.', step: 2 };
-  if (e < s) return { err: 'La date de fin doit être après la date de début.', step: 2 };
-  if (e - s >= MAX_DAYS) return { err: 'Période trop longue : 3 mois maximum.', step: 2 };
-  let slots = 0, days = 0;
-  for (let d = s; d <= e; d++) {
-    const r = draftRule(d);
-    if (!r) continue;
-    days++; slots += popcount(r);
-  }
-  const out = { slots, days };
-  if (!slots) return Object.assign(out, { err: 'Aucun créneau : choisissez au moins un jour et un moment.', step: 2 });
-  if (slots > MAX_SLOTS) return Object.assign(out, { err: `Trop de créneaux (${slots}). Réduisez la période ou le nombre de moments (${MAX_SLOTS} maximum).`, step: 2 });
-  if (draft.dl != null) {
-    if (!Number.isFinite(draft.dl)) return Object.assign(out, { err: 'Date limite de réponse invalide.', step: 3 });
-    if (draft.dl > e) return Object.assign(out, { err: 'La date limite de réponse doit tomber avant la fin de la période.', step: 3 });
-  }
-  if (auth.user && draft.pin && !/^\d{4,6}$/.test(draft.pin)) return Object.assign(out, { err: 'Le code d’accès doit faire 4 à 6 chiffres.', step: 3 });
-  return out;
-}
-
-// « Journée » couvre tout le jour : elle remplace les autres moments, et en choisir un autre la retire.
-const toggleBit = (mask, t) => (t === 0 ? (mask & 1 ? 0 : 1) : (mask & ~1) ^ (1 << t));
-// Tous les moments des règles (ce que reçoit un jour férié ouvert en entier), et les moments d'un jour.
-const draftAll = () => { const u = draft.m.reduce((acc, r) => acc | r, 0); return u & 1 ? 1 : u; };
-const draftRule = (d) => (draft.o.has(d) ? draft.o.get(d) : draft.m[weekday(d)]);
-// Règle un jour à part ; revenir aux moments de la règle efface le réglage.
-function setDay(d, mask) {
-  if (mask === draft.m[weekday(d)]) draft.o.delete(d); else draft.o.set(d, mask);
-}
-
-// Jours fériés de la période. missing : ceux qui n'ont pas tous les moments du sondage (hors des jours choisis,
-// ou un jour où seuls certains moments sont proposés), sauf s'ils ont été réglés à la main.
-// opened : ceux qu'on a ouverts en entier.
-function draftHolidays() {
-  const { s, e } = draft;
-  const all = [], full = draftAll();
-  if (Number.isFinite(s) && Number.isFinite(e) && e >= s && e - s < MAX_DAYS) {
-    for (let d = s; d <= e; d++) { const name = holiday(d); if (name) all.push({ d, name }); }
-  }
-  return {
-    all,
-    missing: full ? all.filter((h) => draft.m[weekday(h.d)] !== full && !(draft.o.get(h.d) > 0)) : [],
-    opened: all.filter((h) => draft.o.get(h.d) === full && draft.m[weekday(h.d)] !== full),
-  };
-}
-function holidaysHTML() {
-  const { all, missing, opened } = draftHolidays();
-  if (!all.length) return '';
-  const n = missing.length;
-  const outside = missing.every((h) => !draft.m[weekday(h.d)]);
-  const what = outside
-    ? `${n > 1 ? `${n} tombent` : all.length > 1 ? 'Un tombe' : 'Il tombe'} en dehors des jours choisis.`
-    : `${n > 1 ? `${n} n’ont` : all.length > 1 ? 'Un n’a' : 'Il n’a'} pas tous les moments du sondage, comme un jour de week-end.`;
-  const go = outside
-    ? (n > 1 ? `Ajouter ces ${n} jours` : 'L’ajouter au sondage')
-    : (n > 1 ? `Proposer tous les moments ces ${n} jours` : 'Proposer tous les moments ce jour-là');
-  return `<p>${all.length > 1 ? 'Jours fériés' : 'Jour férié'} sur la période&nbsp;: ${all.map((h) =>
-    `<span class="nowrap"><b>${fmt(fShort, h.d)}</b> ${esc(h.name)}</span>`).join(' · ')}</p>
-    ${n ? `<p class="hol-act"><span>${what}</span>
-      <button type="button" class="btn sm" data-act="add-hols">${go}</button></p>`
-    : opened.length ? `<p class="hol-act"><span>${opened.length > 1 ? `${opened.length} sont proposés` : 'Il est proposé'} avec tous les moments du sondage.</span>
-      <button type="button" class="btn sm quiet" data-act="del-hols">Revenir aux règles</button></p>` : ''}`;
-}
-function addHolidays() {
-  const days = draftHolidays().missing.map((h) => h.d), full = draftAll();
-  for (const d of days) setDay(d, full);
-  return days;
-}
-function removeHolidays() {
-  for (const h of draftHolidays().opened) draft.o.delete(h.d);
-}
-
-function previewCalHTML() {
-  const { s, e } = draft;
-  if (!(Number.isFinite(s) && Number.isFinite(e) && e >= s && e - s < MAX_DAYS)) return '';
-  return calGrid(s, e, [0, 1, 2, 3, 4, 5, 6], (d) => {
-    const hol = holiday(d);
-    const rule = draft.m[weekday(d)], r = draftRule(d);
-    const own = r !== rule; // réglé à part
-    const state = r ? (own ? 'on own' : 'on') : rule ? 'ex' : 'off';
-    const said = r ? momentsText(r) + (own ? ', réglé à part' : '') : rule ? 'exclu' : 'non proposé';
-    return `<button type="button" class="day pv ${state}${hol ? ' hol' : ''}" data-act="day" data-d="${d}" aria-haspopup="dialog" aria-label="${fmt(fLong, d)}${hol ? ', ' + esc(hol) : ''} : ${said}. Choisir ses moments"${hol ? ` title="${esc(hol)}"` : ''}><span class="day-n">${dateOf(d)}</span>${r ? `<span class="dots">${'<i></i>'.repeat(popcount(r))}</span>` : ''}</button>`;
-  });
-}
-
-/* ---------- Dialogue : les moments d'un jour de l'aperçu ---------- */
-const momentsText = (mask) => MOMENTS.filter((_, t) => mask & (1 << t)).join(', ').toLowerCase();
-let dayDlg = null, dayOpen = null;
-function openDay(d) {
-  if (!dayDlg) {
-    dayDlg = document.createElement('dialog');
-    dayDlg.className = 'dlg';
-    dayDlg.setAttribute('aria-labelledby', 'dlg-title');
-    document.body.appendChild(dayDlg);
-    // Clic sur le fond : on ferme.
-    dayDlg.addEventListener('click', (ev) => { if (ev.target === dayDlg) dayDlg.close(); });
-    dayDlg.addEventListener('close', () => {
-      const back = dayOpen != null && $(`[data-act="day"][data-d="${dayOpen}"]`);
-      dayOpen = null;
-      if (back) back.focus({ preventScroll: true });
-    });
-  }
-  dayOpen = d;
-  paintDay();
-  dayDlg.showModal();
-}
-function paintDay(focusSel) {
-  const d = dayOpen;
-  const hol = holiday(d);
-  const rule = draft.m[weekday(d)], r = draftRule(d);
-  const state = r === rule
-    ? (rule ? 'Comme les autres ' + WD_LONG[weekday(d)].toLowerCase() + 's.' : 'Ce jour n’est pas proposé pour l’instant.')
-    : r ? 'Réglé à part pour ce jour.' : 'Ce jour est exclu du sondage.';
-  dayDlg.innerHTML = `<h2 id="dlg-title">${fmt(fLong, d)}</h2>
-    ${hol ? `<p class="dlg-hol">${esc(hol)}</p>` : ''}
-    <p class="muted">Quels moments proposer ce jour-là&nbsp;?</p>
-    <div class="dlg-moments">${MOMENTS.map((label, t) =>
-      `<button type="button" class="chip" data-act="day-t" data-t="${t}" aria-pressed="${!!(r & (1 << t))}">${label}</button>`).join('')}</div>
-    <p class="hint" aria-live="polite">${state}</p>
-    <div class="dlg-actions">
-      ${r ? '<button type="button" class="btn sm quiet" data-act="day-none">Supprimer le jour</button>' : ''}
-      ${r !== rule ? '<button type="button" class="btn sm quiet" data-act="day-reset">Revenir à la règle</button>' : ''}
-      <button type="button" class="btn sm primary" data-act="day-close">OK</button>
-    </div>`;
-  const f = dayDlg.querySelector(focusSel || '[data-act="day-close"]') || dayDlg.querySelector('[data-act="day-close"]');
-  f.focus();
-}
-// Change les moments du jour ouvert, et rafraîchit l'aperçu derrière le dialogue.
-function changeDay(mask, focusSel) {
-  setDay(dayOpen, mask);
-  paintCreate();
-  paintDay(focusSel);
-}
-
-function paintCreate() {
+// Repeint l'étape en cours. full : on redessine le corps de l'étape (après un clic) ; sinon seulement ce qui dépend
+// de la période ou du curseur, pour ne pas perdre la saisie en cours d'une date ou d'une heure.
+function paintCreate(full) {
+  if (full && (wiz.step === 2 || wiz.step === 3)) { const body = $('#c-body'); if (body) body.innerHTML = stepHTML(); }
   const chk = draftCheck();
   const put = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; return el; };
   if (wiz.step === 1) {
     put('c-icons', ICONS.map((ic) => `<button type="button" class="icon-opt" data-act="icon" data-ic="${ic}" aria-pressed="${(draft.ic || ICONS[0]) === ic}" aria-label="Pictogramme ${ic}">${ic}</button>`).join(''));
   }
-  if (wiz.step === 2) {
-    const len = draft.e - draft.s + 1;
-    put('c-spans', SPANS.map(([label, n]) => `<button type="button" class="chip" data-act="span" data-n="${n}" aria-pressed="${len === n}">${label}</button>`).join(''));
-    const cur = draft.m.join();
-    const custom = !FORMULES.some((f) => f.m.join() === cur);
-    put('c-formules', FORMULES.map((f, k) =>
-      `<button type="button" class="formule" data-act="formule" data-k="${k}" aria-pressed="${f.m.join() === cur}"><b>${f.label}</b><small>${f.sub}</small></button>`).join('')
-      + (custom ? '<span class="formule on-mesure" aria-current="true"><b>Sur mesure</b><small>Vos propres règles</small></span>' : ''));
-    put('c-matrix',
-      `<span></span>${WD.map((d, w) => `<button type="button" class="mx-h" data-act="mx-col" data-w="${w}" aria-label="${WD_LONG[w]} : tout cocher ou décocher">${d}</button>`).join('')}`
-      + MOMENTS.map((label, t) =>
-        `<button type="button" class="mx-h row" data-act="mx-row" data-t="${t}" aria-label="${label} : tout cocher ou décocher">${label}</button>`
-        + WD.map((d, w) => `<button type="button" class="mx-c" data-act="cell" data-w="${w}" data-t="${t}" aria-pressed="${!!(draft.m[w] & (1 << t))}" aria-label="${label}, ${WD_LONG[w]}"></button>`).join('')).join(''));
-    put('c-rules', rulesLines(draft.m).map((l) => `<li>${icon('check', 14)}${esc(l)}</li>`).join(''));
-    put('c-cal', previewCalHTML());
+  if (wiz.step === 2 && draft.fmt) {
+    put('c-spans', spansHTML());
+    put('c-ponts-list', pontsListHTML());
     const hols = document.getElementById('c-hols');
-    const holHtml = holidaysHTML();
-    hols.innerHTML = holHtml;
-    hols.hidden = !holHtml;
-    hols.classList.toggle('todo', !!hols.querySelector('[data-act="add-hols"]'));
-    put('c-count', chk.slots ? `${plural(chk.slots, 'créneau', 'créneaux')} sur ${plural(chk.days, 'jour')}` : '');
+    if (hols) {
+      const html = holsHTML();
+      hols.innerHTML = html;
+      hols.hidden = !html;
+      hols.classList.toggle('todo', !!hols.querySelector('[data-act="add-hols"]'));
+    }
   }
-  if (wiz.step === 3) {
+  if (wiz.step === 4) {
     put('c-guests', draft.g.map((name, k) => {
       const must = draft.r.has(norm(name));
       return `<li class="guest${must ? ' must' : ''}">
@@ -1010,30 +1362,98 @@ function paintCreate() {
     const dl = document.getElementById('c-dl');
     if (dl && Number.isFinite(draft.e)) dl.max = ymd(draft.e, '-');
   }
-  const blocking = chk.err && chk.step <= wiz.step;
+  // Les étapes 3 et 4 ne s'ouvrent qu'une fois le genre de créneaux choisi.
+  document.querySelectorAll('.steps [data-act="step"]').forEach((b) => { b.disabled = +b.dataset.n > 2 && !draft.fmt; });
+  const blocking = chk.err && !chk.quiet && chk.step <= wiz.step;
   const err = document.getElementById('c-error');
-  err.hidden = !blocking;
-  err.textContent = blocking ? chk.err : '';
+  if (err) { err.hidden = !blocking; err.textContent = blocking ? chk.err : ''; }
   const sum = [];
-  if (chk.slots && !(chk.err && chk.step === 2)) sum.push(`<b>${plural(chk.slots, 'créneau', 'créneaux')}</b> sur ${plural(chk.days, 'jour')}`);
-  if (wiz.step > 1 && Number.isFinite(draft.s) && Number.isFinite(draft.e)) sum.push(`du ${fmt(fDM, draft.s)} au ${fmt(fDM, draft.e)}`);
+  if (draft.fmt && !(chk.err && chk.step === 2)) {
+    if (chk.stay) sum.push(`<b>${plural(chk.n, FM[draft.fmt].one, FM[draft.fmt].many)}</b>`);
+    else if (chk.slots) sum.push(`<b>${plural(chk.slots, 'créneau', 'créneaux')}</b> sur ${plural(chk.days, 'jour')}`);
+  }
+  if (wiz.step > 1 && periodOk()) sum.push(`du ${fmt(fDM, draft.s)} au ${fmt(fDM, draft.e)}`);
   put('c-sum', sum.join(' · '));
   const goBtn = document.getElementById('c-go');
-  goBtn.disabled = busy || (wiz.step === STEPS.length ? !!chk.err : !!blocking);
+  if (goBtn) goBtn.disabled = busy || (wiz.step === STEPS.length ? !!chk.err : !!blocking || (wiz.step === 2 && !draft.fmt));
 }
 
-function toggleMoment(t) {
-  const bit = 1 << t;
-  const on = draft.m.some((r) => r & bit);
-  if (on) { draft.m = draft.m.map((r) => r & ~bit); return; }
-  const anyDay = draft.m.some((r) => r);
-  // Sur les jours déjà choisis (ou tous, s'il n'y en a aucun) ; « Journée » remplace les autres moments.
-  draft.m = draft.m.map((r) => (anyDay && !r ? r : t === 0 ? 1 : (r & ~1) | bit));
+// Toucher une tuile : le genre est choisi, ses réglages s'ouvrent dessous et la page y descend. Pour changer, on remonte.
+function chooseFormat(k) {
+  draft.fmt = k;
+  if (!draft.touched) draft.e = draft.s + (FORMAT_SPAN[k] || 28) - 1;
+  paintCreate(true);
+  const sec = $('#reglages'), title = $('#reglages-titre');
+  if (title) title.focus({ preventScroll: true });
+  if (sec) sec.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
 }
-function toggleDay(w) {
-  if (draft.m[w]) { draft.m[w] = 0; return; }
-  draft.m[w] = draftAll() || SOIR;
+// Un clic dans l'étape 2 ou 3 (réglages, aperçu, dialogue). Renvoie false si l'action n'est pas de la création.
+function createAction(act, el) {
+  const f = draft.fmt, k = el.dataset.k;
+  const key = f === 'heure' ? k : +k; // clé d'un créneau dans un jour
+  switch (act) {
+    case 'span-preset': { const [s0, e0] = k.split('-').map(Number); draft.span[f] = { s: s0, e: e0 }; break; }
+    case 'preset':
+      if (isGrid(f)) {
+        // Les jours du raccourci gardent leurs moments (ou reçoivent ceux du tableau) ; les autres sont vidés.
+        const ws = DAY_PRESETS[k][1], all = chosenKeys(f), base = all.length ? all : [GRID_ROWS[f][GRID_ROWS[f].length - 1]];
+        draft.grid[f] = draft.grid[f].map((keys, w) => (ws.includes(w) ? (keys.length ? keys : base.slice()) : []));
+      } else draft.days[f] = DAY_PRESETS[k][1].slice();
+      break;
+    case 'wd': { const w = +el.dataset.w, ws = draft.days[f]; draft.days[f] = ws.includes(w) ? ws.filter((x) => x !== w) : ws.concat(w).sort((a, b) => a - b); break; }
+    // Le tableau : une case, une ligne entière (un moment) ou une colonne entière (un jour).
+    case 'mx-cell': { const w = +el.dataset.w, g = draft.grid[f]; g[w] = g[w].includes(key) ? g[w].filter((x) => x !== key) : addKey(g[w], key); break; }
+    case 'mx-row': {
+      const g = draft.grid[f];
+      if (g.some((keys) => keys.includes(key))) draft.grid[f] = g.map((keys) => keys.filter((x) => x !== key));
+      else { const any = g.some((keys) => keys.length); draft.grid[f] = g.map((keys) => (any && !keys.length ? keys : addKey(keys, key))); }
+      break;
+    }
+    case 'mx-col': {
+      const w = +el.dataset.w, g = draft.grid[f];
+      if (g[w].length) g[w] = [];
+      else { const all = chosenKeys(f); g[w] = all.includes(0) ? [0] : all.length ? all : [GRID_ROWS[f][GRID_ROWS[f].length - 1]]; }
+      break;
+    }
+    case 'range-add': draft.ranges.push(draft.ranges.some((r) => r[0] === '12:00') ? ['10:00', '12:00'] : ['12:00', '14:00']); break;
+    case 'range-del': draft.ranges.splice(+el.dataset.i, 1); break;
+    case 'add-hols': {
+      const added = dayHols().missing;
+      for (const h of added) draft.dayEdits[f].set(h.d, chosenKeys(f));
+      showToast(added.length > 1 ? `${added.length} jours fériés ajoutés.` : 'Jour férié ajouté.');
+      break;
+    }
+    case 'del-hols': for (const h of dayHols().opened) draft.dayEdits[f].delete(h.d); break;
+    case 'band': openCreateDlg({ kind: 'band', anchor: +k }); return true;
+    case 'day': openCreateDlg({ kind: 'day', d: +el.dataset.d, extra: new Set() }); return true;
+    case 'dlg-close': cDlg.close(); return true;
+    case 'strip': stripTap(+el.dataset.d); break;
+    case 'b-ah': { const b = curBand(); b.ah = b.ah ? 0 : 1; if (b.a === b.b && b.ah && !b.bh) b.ah = 0; putBand(b); break; }
+    case 'b-bh': { const b = curBand(); b.bh = b.bh ? 0 : 1; if (b.a === b.b && b.ah && !b.bh) b.bh = 1; putBand(b); break; }
+    case 'b-remove': { const b = curBand(); b.removed = true; putBand(b); break; }
+    case 'b-restore': { const b = curBand(); b.removed = false; putBand(b); break; }
+    case 'b-reset': draft.bandEdits[f].delete(cDlgOpen.anchor); break;
+    case 'day-t': {
+      const d = cDlgOpen.d, keys = dayKeys(d);
+      setDayKeys(d, keys.includes(key) ? keys.filter((x) => x !== key) : f === 'heure' ? keys.concat(key) : addKey(keys, key));
+      break;
+    }
+    case 'day-none': setDayKeys(cDlgOpen.d, []); break;
+    case 'day-reset': draft.dayEdits[f].delete(cDlgOpen.d); break;
+    case 'day-add': {
+      const r = [cDlg.querySelector('#d-a').value, cDlg.querySelector('#d-b').value];
+      if (!validRange(r)) { showToast('L’horaire doit finir après son début.', true); return true; }
+      cDlgOpen.extra.add(r.join('-'));
+      setDayKeys(cDlgOpen.d, dayKeys(cDlgOpen.d).concat(r.join('-')));
+      break;
+    }
+    default: return false;
+  }
+  paintCreate(true);
+  if (cDlg && cDlg.open && cDlgOpen) paintCreateDlg();
+  return 'repaint';
 }
+
 function addGuests(text) {
   const have = new Set(draft.g.map(norm));
   for (const raw of String(text).split(/[,;\n]+/)) {
@@ -1044,37 +1464,92 @@ function addGuests(text) {
   }
 }
 
+/* ---------- Brouillon ↔ réglages du serveur ---------- */
+const hm = (s) => s.replace(':', ''); // « 19:00 » → « 1900 »
+const hhmm = (s) => s.slice(0, 2) + ':' + s.slice(2);
 function draftPayload() {
-  const own = Array.from(draft.o).filter(([d]) => d >= draft.s && d <= draft.e).sort((p, q) => p[0] - q[0]);
-  return {
-    t: draft.t.trim(),
-    n: draft.n.trim(),
-    l: draft.l.trim(),
-    ic: draft.ic,
+  const f = draft.fmt;
+  const base = {
+    t: draft.t.trim(), n: draft.n.trim(), l: draft.l.trim(), ic: draft.ic,
     s: ymd(draft.s), e: ymd(draft.e),
-    m: draft.m.slice(),
-    // Jours réglés à part : sans moment, le jour est exclu (x) ; sinon il porte ses propres moments (o).
-    x: own.filter(([d, r]) => !r && draft.m[weekday(d)]).map(([d]) => d - draft.s),
-    o: own.filter(([d, r]) => r && r !== draft.m[weekday(d)]).map(([d, r]) => [d - draft.s, r]),
     dl: draft.dl != null ? ymd(draft.dl) : '',
     q: draft.q,
     g: draft.g.slice(),
     r: draft.g.filter((name) => draft.r.has(norm(name))),
     pin: auth.user ? draft.pin : '', // le code est réservé aux organisateurs connectés
   };
+  if (isStayFmt(f)) {
+    // Séjours en demi-journées depuis le début de la période, allongée s'ils en débordent (week-end qui commence le vendredi).
+    const on = bandList().filter((b) => !b.removed);
+    const s = Math.min(draft.s, ...on.map((b) => b.a)), e = Math.max(draft.e, ...on.map((b) => b.b));
+    return Object.assign(base, {
+      s: ymd(s), e: ymd(e), k: 'j', m: [0, 0, 0, 0, 0, 0, 0],
+      j: on.map((b) => [2 * (b.a - s) + b.ah, 2 * (b.b - s) + b.bh]).sort((p, q) => p[0] - q[0] || p[1] - q[1]),
+      jr: [f === 'weekend' ? 'w' : 's', draft.span[f].s, draft.span[f].e, draft.ponts ? 1 : 0],
+    });
+  }
+  // Un jour : ses créneaux en masque (un bit par moment, ou par plage de h pour un horaire précis).
+  const keysAll = f === 'heure' ? heureKeys() : null;
+  const mask = (keys) => keys.reduce((m, k) => m | (1 << (f === 'heure' ? keysAll.indexOf(k) : k)), 0);
+  const m = WD.map((_, w) => (isGrid(f) ? mask(draft.grid[f][w]) : draft.days[f].includes(w) ? mask(chosenKeys(f)) : 0));
+  const own = Array.from(draft.dayEdits[f]).filter(([d]) => d >= draft.s && d <= draft.e).sort((p, q) => p[0] - q[0]);
+  return Object.assign(base, f === 'heure' ? { k: 'h', h: keysAll.map((k) => k.split('-').map(hm)) } : {}, {
+    m,
+    // Jours réglés à part : sans créneau, le jour est exclu (x) ; sinon il porte ses propres créneaux (o).
+    x: own.filter(([d, keys]) => !keys.length && m[weekday(d)]).map(([d]) => d - draft.s),
+    o: own.filter(([d, keys]) => keys.length && mask(keys) !== m[weekday(d)]).map(([d, keys]) => [d - draft.s, mask(keys)]),
+  });
 }
+// Le genre d'un sondage enregistré : les séjours et les horaires précis le disent ; pour des moments, on le déduit de ceux proposés.
+function formatOf(st) {
+  if (st.k === 'j') return st.jr && st.jr[0] === 's' ? 'semaine' : 'weekend';
+  if (st.k === 'h') return 'heure';
+  const bits = st.m.reduce((u, r) => u | r, 0) | (st.o || []).reduce((u, p) => u | p[1], 0);
+  return bits === 1 ? 'journee' : !(bits & ~(2 | 8)) ? 'demi' : !(bits & ~(4 | 16)) ? 'repas' : 'libre';
+}
+const bitKeys = (mask) => MOMENTS.map((_, t) => t).filter((t) => mask & (1 << t));
 function draftFromPoll(st) {
-  const s = parseYmd(st.s);
-  // Les anciens « jours ajoutés » (a) prenaient tous les moments du sondage : on les relit comme des jours réglés à part.
-  const all = st.m.reduce((u, r) => u | r, 0);
-  const o = new Map((st.a || []).map((k) => [s + k, all]));
-  for (const [k, r] of st.o || []) o.set(s + k, r);
-  for (const k of st.x || []) o.set(s + k, 0);
-  return {
-    t: st.t, n: st.n || '', l: st.l || '', ic: st.ic || '', s, e: parseYmd(st.e), m: st.m.slice(),
-    o, pin: st.pin || '',
+  const d = newDraft();
+  Object.assign(d, {
+    t: st.t, n: st.n || '', l: st.l || '', ic: st.ic || '', s: parseYmd(st.s), e: parseYmd(st.e), touched: true, pin: st.pin || '',
     dl: st.dl ? parseYmd(st.dl) : null, q: st.q || 0, g: (st.g || []).slice(), r: new Set((st.r || []).map(norm)),
-  };
+  });
+  const s = d.s, f = formatOf(st);
+  d.fmt = f;
+  if (isStayFmt(f)) {
+    if (st.jr) { d.span[f] = { s: st.jr[1], e: st.jr[2] }; d.ponts = !!st.jr[3]; }
+    // Les séjours enregistrés, comparés à la règle : chacun retrouve le séjour de la règle qu'il chevauche ;
+    // différent, il est retouché ; une règle sans séjour, c'est un séjour retiré.
+    const saved = st.j.map(([a, b]) => ({ a: s + (a >> 1), ah: a & 1, b: s + (b >> 1), bh: b & 1 }));
+    const used = new Set();
+    for (const r of ruleBands(d, f, f === 'weekend' && d.ponts)) {
+      const i = saved.findIndex((x, k) => !used.has(k) && x.a <= r.b && x.b >= r.a);
+      if (i < 0) { d.bandEdits[f].set(r.anchor, { a: r.a, ah: r.ah, b: r.b, bh: r.bh, removed: true }); continue; }
+      used.add(i);
+      const x = saved[i];
+      if (x.a !== r.a || x.ah !== r.ah || x.b !== r.b || x.bh !== r.bh) d.bandEdits[f].set(r.anchor, Object.assign({ removed: false }, x));
+    }
+    return d;
+  }
+  const all = st.m.reduce((u, r) => u | r, 0);
+  let keysOf = bitKeys;
+  if (f === 'heure') {
+    const keys = st.h.map((r) => r.map(hhmm).join('-'));
+    keysOf = (mask) => keys.filter((_, t) => mask & (1 << t));
+    const global = keysOf(all);
+    d.ranges = (global.length ? global : keys.slice(0, 1)).map((k) => k.split('-'));
+    d.days.heure = WD.map((_, w) => w).filter((w) => st.m[w]);
+  } else if (f === 'journee') {
+    d.days.journee = WD.map((_, w) => w).filter((w) => st.m[w]);
+  } else {
+    d.grid[f] = st.m.map((mask) => bitKeys(mask));
+  }
+  // Jours réglés à part : les anciens jours ajoutés (a, tous les moments), les jours réglés (o), les jours exclus (x).
+  const ed = d.dayEdits[f];
+  for (const k of st.a || []) ed.set(s + k, keysOf(all));
+  for (const [k, r] of st.o || []) ed.set(s + k, keysOf(r));
+  for (const k of st.x || []) ed.set(s + k, []);
+  return d;
 }
 
 function startEdit() {
@@ -1093,11 +1568,16 @@ function leaveEdit() {
   startRefresh();
   window.scrollTo(0, 0);
 }
-// Nouveau sondage avec les mêmes règles et les mêmes invités, sur une période qui repart de demain.
+// Nouveau sondage avec les mêmes réglages et les mêmes invités, sur une période qui repart de demain.
+// Les retouches de l'aperçu tenaient aux anciennes dates : on les oublie.
 function duplicatePoll() {
   const d = draftFromPoll(poll.st);
   const len = d.e - d.s;
-  draft = Object.assign(d, { t: d.t, s: todayDay + 1, e: todayDay + 1 + len, o: new Map(), dl: null, pin: '' });
+  draft = Object.assign(d, {
+    s: todayDay + 1, e: todayDay + 1 + Math.min(len, MAX_DAYS - 1), dl: null, pin: '',
+    bandEdits: { semaine: new Map(), weekend: new Map() },
+    dayEdits: { journee: new Map(), demi: new Map(), repas: new Map(), heure: new Map(), libre: new Map() },
+  });
   createDraft = null;
   wiz = { step: 2, editing: false };
   go('/nouveau');
@@ -1284,7 +1764,7 @@ function factsHTML(c) {
   const facts = [];
   if (st.l) facts.push([icon('place', 16), esc(st.l)]);
   facts.push([icon('calendar', 16), `Du ${fmt(fShort, s)} au ${fmt(fShort, e)}`]);
-  facts.push([icon('rules', 16), esc(rulesLines(st.m).join(' ; ')) + (added ? ` + ${plural(added, 'jour réglé à part', 'jours réglés à part')}` : '')]);
+  facts.push([icon('rules', 16), esc(pollRulesText(st)) + (added ? ` + ${plural(added, 'jour réglé à part', 'jours réglés à part')}` : '')]);
   if (st.dl) facts.push([icon('clock', 16), st.late ? `Réponses closes depuis le ${fmt(fLong, parseYmd(st.dl))}` : `Réponses jusqu’au ${fmt(fLong, parseYmd(st.dl))}`]);
   if (st.q) facts.push([icon('users', 16), `Au moins ${st.q} personnes`]);
   return facts.map(([ic, text]) => `<li>${ic}<span>${text}</span></li>`).join('');
@@ -1359,6 +1839,9 @@ function flagsHTML(st, r) {
   return out.length ? `<ul class="flags">${out.map((t) => `<li>${icon('flag', 14)}<span>${t}</span></li>`).join('')}</ul>` : '';
 }
 
+// Un créneau en grand : le jour (ou le séjour), puis le moment et ses horaires (ou la durée du séjour).
+const vTitle = (sl) => (isStay(sl) ? cap(stayText(sl)) : cap(fmt(fLong, sl.d)));
+const vMoment = (sl) => (isStay(sl) ? cap(stayLength(sl)) : sl.h ? rangeText(sl.h) : `${MOMENTS[sl.t]} · ${slotHours(sl)}`);
 function verdictHTML(c) {
   const { st, slots, people, stats, ranked } = c;
   const n = people.length;
@@ -1367,8 +1850,8 @@ function verdictHTML(c) {
     const sl = slots[f];
     return `<section class="verdict decided" aria-label="Date choisie">
       <p class="v-label">${icon('check', 16)}C’est décidé</p>
-      <p class="v-title">${esc(cap(fmt(fLong, sl.d)))}</p>
-      <p class="v-moment">${MOMENTS[sl.t]} · ${slotHours(sl)}${MOMENT_HOURS[sl.t] ? ' (indicatif)' : ''}${st.l ? ` · ${esc(st.l)}` : ''}</p>
+      <p class="v-title">${esc(vTitle(sl))}</p>
+      <p class="v-moment">${vMoment(sl)}${!st.k && MOMENT_HOURS[sl.t] ? ' (indicatif)' : ''}${st.l ? ` · ${esc(st.l)}` : ''}</p>
       ${n ? `<p class="v-score">${scoreText(stats[f], n)}</p>${whoHTML(f, people)}` : ''}
       ${agendaHTML(sl)}
       ${canDecide() ? `<div class="actions"><button type="button" class="btn sm onaccent" data-act="unfinal">Changer de date</button></div>` : ''}
@@ -1391,8 +1874,8 @@ function verdictHTML(c) {
   const decide = canDecide();
   return `<section class="verdict" aria-label="Meilleur créneau">
     <p class="v-label">${label}</p>
-    <p class="v-title">${esc(cap(fmt(fLong, sl.d)))}</p>
-    <p class="v-moment">${MOMENTS[sl.t]} · ${slotHours(sl)}</p>
+    <p class="v-title">${esc(vTitle(sl))}</p>
+    <p class="v-moment">${vMoment(sl)}</p>
     <p class="v-score">${scoreText(best, n)}</p>
     ${whoHTML(best.i, people)}
     ${flagsHTML(st, best)}
@@ -1422,12 +1905,14 @@ function nameHint(name) {
 }
 function slotAria(sl, v, i) {
   const c = conflictOf(i);
-  return `${fmt(fLong, sl.d)}, ${MOMENTS[sl.t].toLowerCase()} : ${STATE_LABEL[v]}${c ? ` (déjà pris : ${c})` : ''}`;
+  return `${slotLong(sl)} : ${STATE_LABEL[v]}${c ? ` (déjà pris : ${c})` : ''}`;
 }
-const pillClass = (i, v) => 'pill ans s' + v + (conflictOf(i) ? ' busy' : '');
+const pillClass = (i, v) => 'pill ans s' + v + (isStay(poll.slots[i]) ? ' row' : '') + (conflictOf(i) ? ' busy' : '');
+// Un séjour s'écrit en toutes lettres sur sa ligne ; ailleurs, la case du jour suffit (avec le moment s'il y en a plusieurs).
+const stayLabel = (sl) => `<span class="pill-l"><b>${esc(cap(stayText(sl)))}</b><small>${stayLength(sl)}</small></span>`;
 function answerPill(i, multi) {
   const sl = poll.slots[i], v = ui.vals[i] || 0, c = conflictOf(i);
-  return `<button type="button" class="${pillClass(i, v)}" data-act="slot" data-i="${i}" aria-label="${esc(slotAria(sl, v, i))}"${c ? ` title="${esc(c)}"` : ''}>${multi ? `<small>${MOMENT_SHORT[sl.t]}</small>` : ''}<span class="mk" aria-hidden="true"></span></button>`;
+  return `<button type="button" class="${pillClass(i, v)}" data-act="slot" data-i="${i}" aria-label="${esc(slotAria(sl, v, i))}"${c ? ` title="${esc(c)}"` : ''}>${isStay(sl) ? stayLabel(sl) : multi ? `<small>${slotTag(sl)}</small>` : ''}<span class="mk" aria-hidden="true"></span></button>`;
 }
 function paintSlots() {
   if (!ui.open || !poll || !poll.slots) return;
@@ -1491,6 +1976,7 @@ function answerHTML(c) {
   }
   const multi = usedMoments(slots).length > 1;
   const moments = usedMoments(slots);
+  const stays = st.k === 'j';
   const pending = ui.editing ? [] : pendingGuests(st);
   const del = !ui.editing ? '' : ui.delAsk
     ? `<div class="confirm"><span>Supprimer la réponse de ${esc(ui.editing)}&nbsp;?</span><button type="button" class="btn sm danger" data-act="del-confirm">Supprimer</button><button type="button" class="btn sm" data-act="del-cancel">Annuler</button></div>`
@@ -1509,16 +1995,17 @@ function answerHTML(c) {
       <span class="label">Touchez vos créneaux</span>
       <ol class="turns">${turns.map(([n, label, cls]) =>
         `<li class="turn ${cls}"><span class="mk" aria-hidden="true"></span><span><small>${n}</small>${label}</span></li>`).join('')}</ol>
-      <p class="hint">Chaque appui fait passer un créneau au choix suivant. Touchez un jour de la semaine pour toute la colonne.</p>
+      <p class="hint">${stays ? `Chaque appui fait passer ${st.jr && st.jr[0] === 's' ? 'une semaine' : 'un week-end'} au choix suivant.`
+        : 'Chaque appui fait passer un créneau au choix suivant. Touchez un jour de la semaine pour toute la colonne.'}</p>
     </div>
     <div class="quick">
       <button type="button" class="chip sm" data-act="bulk" data-v="1">Tout cocher</button>
       <button type="button" class="chip sm" data-act="bulk" data-v="0">Tout effacer</button>
-      ${multi ? moments.map((t) => `<button type="button" class="chip sm" data-act="fill-t" data-t="${t}">${MOMENTS[t]}</button>`).join('') : ''}
+      ${multi ? moments.map((t) => `<button type="button" class="chip sm" data-act="fill-t" data-t="${t}">${momentName(st, t)}</button>`).join('') : ''}
     </div>
     <div class="agenda-tools" id="ans-agenda" aria-live="polite">${agendaToolsHTML()}</div>
-    ${!multi ? `<p class="cal-cap">${MOMENTS[moments[0]]}${MOMENT_HOURS[moments[0]] ? ` · ${slotHours({ t: moments[0] })}` : ''}</p>` : ''}
-    ${slotCal(slots, (i) => answerPill(i, multi), {
+    ${!multi && !stays ? `<p class="cal-cap">${momentCap(st, moments[0])}</p>` : ''}
+    ${slotsView(slots, (i) => answerPill(i, multi), {
       headHTML: (w) => `<button type="button" class="cal-wd tap" data-act="fill-wd" data-w="${w}" aria-label="Tous les ${WD_LONG[w]}s">${WD[w]}</button>`,
     })}
     <div class="field"><label for="ans-note">Un petit mot <span class="opt">(facultatif)</span></label><input type="text" id="ans-note" maxlength="${MAX_NOTE}" placeholder="Dispo seulement après 20 h" autocomplete="off" value="${esc(ui.note)}"></div>
@@ -1541,13 +2028,23 @@ function parisTime(d, hhmm) {
 }
 const fParisHm = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const parisHm = (ms) => fParisHm.format(new Date(ms)).replace(/\D/g, '');
-// Plage comparée à l'agenda : les horaires indicatifs du moment, ou 8 h – 23 h pour « Journée ».
+// Plage comparée à l'agenda : les horaires (indicatifs pour un moment), 8 h – 23 h pour « Journée » ;
+// un séjour, de 8 h (ou 14 h s'il commence l'après-midi) le premier jour à 23 h (ou midi s'il finit le matin) le dernier.
 function slotRange(sl) {
-  const h = MOMENT_HOURS[sl.t] || ['0800', '2300'];
-  return [parisTime(sl.d, h[0]), parisTime(sl.d, h[1])];
+  if (isStay(sl)) return [parisTime(sl.d, sl.ah ? '1400' : '0800'), parisTime(sl.d2, sl.bh ? '2300' : '1200')];
+  const h = slotTimes(sl) || ['0800', '2300'];
+  return [parisTime(sl.d, h[0]), h[1] === '2400' ? parisTime(sl.d + 1, '0000') : parisTime(sl.d, h[1])];
 }
-// « pris 20 h – 22 h 30 » si une plage occupée chevauche le créneau, sinon ''.
+// « pris 20 h – 22 h 30 » si une plage occupée chevauche le créneau, sinon '' ; pour un séjour, les jours pris.
 function busyLabel(sl, range, busyRanges) {
+  if (isStay(sl)) {
+    const days = [];
+    for (let d = sl.d; d <= sl.d2; d++) {
+      const a = Math.max(range[0], parisTime(d, '0000')), b = Math.min(range[1], parisTime(d + 1, '0000'));
+      if (busyRanges.some(([s, e]) => s < b && e > a)) days.push(d);
+    }
+    return days.length ? 'pris ' + days.slice(0, 2).map((d) => fmt(fShort, d)).join(', ') + (days.length > 2 ? '…' : '') : '';
+  }
   const dayStart = parisTime(sl.d, '0000'), dayEnd = parisTime(sl.d + 1, '0000');
   const hits = busyRanges.filter(([s, e]) => s < range[1] && e > range[0]).map(([s, e]) => {
     const a = Math.max(s, dayStart), b = Math.min(e, dayEnd);
@@ -1681,13 +2178,12 @@ async function loadPollConflicts() {
   try {
     const { polls } = await api('GET', '/me/polls');
     if (agendaKey() !== key || !ui.open) return;
-    const overlap = (a, b) => { const ha = MOMENT_HOURS[a], hb = MOMENT_HOURS[b]; return !ha || !hb || (ha[0] < hb[1] && hb[0] < ha[1]); };
     const found = new Map();
     for (const p of polls) {
       if (p.i === poll.st.i || !p.dd || !p.going) continue;
-      const d = parseYmd(p.dd);
+      const other = slotFromJson(p.ds) || { d: parseYmd(p.dd), t: p.dt || 0 };
       poll.slots.forEach((sl, i) => {
-        if (sl.d === d && overlap(sl.t, p.dt)) found.set(i, (found.has(i) ? found.get(i) + ', ' : '') + `« ${p.t} »`);
+        if (slotsOverlap(sl, other)) found.set(i, (found.has(i) ? found.get(i) + ', ' : '') + `« ${p.t} »`);
       });
     }
     agendaNow().polls = found;
@@ -1699,8 +2195,8 @@ async function loadPollConflicts() {
 // Pastille d'un créneau dans les résultats : plus elle est foncée, plus il y a de monde.
 function heatPill(sl, r, n, { multi, inert, best, final, picked } = {}) {
   const level = n && r.tot ? Math.max(1, Math.ceil((r.tot / n) * 4)) : 0;
-  const cls = `pill heat h${level}${final ? ' final' : ''}${best ? ' best' : ''}${r.ok ? '' : ' blocked'}${r.past ? ' past' : ''}${picked ? ' picked' : ''}`;
-  const inner = `${multi ? `<small>${MOMENT_SHORT[sl.t]}</small>` : ''}<b>${r.tot}</b>`;
+  const cls = `pill heat h${level}${isStay(sl) ? ' row' : ''}${final ? ' final' : ''}${best ? ' best' : ''}${r.ok ? '' : ' blocked'}${r.past ? ' past' : ''}${picked ? ' picked' : ''}`;
+  const inner = `${isStay(sl) ? stayLabel(sl) : multi ? `<small>${slotTag(sl)}</small>` : ''}<b>${r.tot}</b>`;
   if (inert) return `<span class="${cls}">${inner}</span>`;
   return `<button type="button" class="${cls}" data-act="pick" data-i="${r.i}" aria-pressed="${!!picked}" aria-label="${esc(slotLong(sl))} : ${r.tot} sur ${n}${final ? ', date choisie' : ''}">${inner}</button>`;
 }
@@ -1732,21 +2228,21 @@ function resultsHTML(c) {
     return `<li class="${r.i === f ? 'final' : ''}${r.ok ? '' : ' blocked'}">
       <button type="button" class="rank-row" data-act="pick" data-i="${r.i}" aria-label="Voir le détail : ${esc(slotLong(sl))}">
         <span class="rank-n">${k + 1}</span>
-        <span class="rank-main"><b>${esc(cap(fmt(fShort, sl.d)))} · ${MOMENTS[sl.t].toLowerCase()}</b>
+        <span class="rank-main"><b>${esc(cap(slotShort(sl)))}</b>
           <span class="bar"><i style="width:${Math.round((r.tot / n) * 100)}%"></i></span>
           ${extra ? `<small>${extra}</small>` : ''}</span>
         <span class="rank-score"><b>${r.tot}</b>/${n}</span>
       </button></li>`;
   }).join('')}</ol>` : '';
   const cal = focus
-    ? slotCal(slots, (i) => { const sl = slots[i], v = +(focus.a[i] || 0); return `<span class="pill ans ro s${v}" title="${esc(slotShort(sl))} : ${STATE_LABEL[v]}">${multi ? `<small>${MOMENT_SHORT[sl.t]}</small>` : ''}<span class="mk" aria-hidden="true"></span></span>`; })
-    : slotCal(slots, (i) => heatPill(slots[i], stats[i], n, { multi, final: i === f, picked: i === pick, best: f < 0 && best.tot > 0 && sameRank(stats[i], best) }));
+    ? slotsView(slots, (i) => { const sl = slots[i], v = +(focus.a[i] || 0); return `<span class="pill ans ro s${v}${isStay(sl) ? ' row' : ''}" title="${esc(slotShort(sl))} : ${STATE_LABEL[v]}">${isStay(sl) ? stayLabel(sl) : multi ? `<small>${slotTag(sl)}</small>` : ''}<span class="mk" aria-hidden="true"></span></span>`; })
+    : slotsView(slots, (i) => heatPill(slots[i], stats[i], n, { multi, final: i === f, picked: i === pick, best: f < 0 && best.tot > 0 && sameRank(stats[i], best) }));
   return `<section class="card results" aria-labelledby="r-h">
     <div class="row-between"><h2 id="r-h">Les réponses</h2>${poll.example ? '' : '<span class="live">En direct</span>'}</div>
     ${podium ? `<h3 class="sub">Les meilleurs créneaux</h3>${podium}` : ''}
     <div class="row-between"><h3 class="sub">${focus ? `Les dispos de ${esc(focus.n)}` : 'Vue d’ensemble'}</h3>
       ${focus ? `<button type="button" class="chip sm" data-act="unfocus">${icon('x', 14)}Revenir à tout le monde</button>` : ''}</div>
-    ${!multi ? `<p class="cal-cap">${MOMENTS[usedMoments(slots)[0]]}</p>` : ''}
+    ${!multi && st.k !== 'j' ? `<p class="cal-cap">${momentName(st, usedMoments(slots)[0])}</p>` : ''}
     ${cal}
     ${focus
       ? `<p class="legend"><span class="sw s1"></span>dispo<span class="sw s2"></span>si besoin<span class="sw s0"></span>pas dispo</p>`
@@ -1822,7 +2318,7 @@ function orgHTML() {
     : 'Créé sans compte&nbsp;: toute personne qui a le lien peut le modifier, le clôturer ou le supprimer, et choisir la date.';
   const secure = st.isOwner ? `<p class="hint">${st.pin
       ? `Protégé par le code <b class="code">${esc(st.pin)}</b>.`
-      : 'Pas de code d’accès&nbsp;: le lien suffit pour ouvrir le sondage.'} Pour le changer&nbsp;: «&nbsp;Modifier&nbsp;», étape 3.</p>`
+      : 'Pas de code d’accès&nbsp;: le lien suffit pour ouvrir le sondage.'} Pour le changer&nbsp;: «&nbsp;Modifier&nbsp;», étape 4.</p>`
     : !auth.enabled ? ''
       : auth.user
         ? `<div class="secure"><p><b>Gardez la main avec votre compte.</b> Vous serez le seul à le gérer et à choisir la date, vous le retrouverez partout et pourrez le protéger par un code.</p>${ui.claimAsk
@@ -1845,10 +2341,12 @@ function orgHTML() {
 }
 
 function agendaHTML(sl) {
-  const hours = MOMENT_HOURS[sl.t];
+  // Horaires (indicatifs pour un moment, précis sinon), ou des jours entiers pour « Journée » et les séjours.
+  const hours = slotTimes(sl);
   const day = ymd(sl.d);
-  const dates = hours ? `${day}T${hours[0]}00/${day}T${hours[1]}00` : `${day}/${ymd(sl.d + 1)}`;
-  const details = (poll.st.n ? poll.st.n + '\n\n' : '') + 'Horaires indicatifs.' + (poll.example ? '' : ' Sondage : ' + pollLink());
+  const until = hours && hours[1] === '2400' ? `${ymd(sl.d + 1)}T000000` : hours ? `${day}T${hours[1]}00` : '';
+  const dates = hours ? `${day}T${hours[0]}00/${until}` : `${day}/${ymd(slotEnd(sl) + 1)}`;
+  const details = (poll.st.n ? poll.st.n + '\n\n' : '') + [hours && !poll.st.k ? 'Horaires indicatifs.' : '', poll.example ? '' : 'Sondage : ' + pollLink()].filter(Boolean).join(' ');
   const google = 'https://calendar.google.com/calendar/render?action=TEMPLATE'
     + '&text=' + encodeURIComponent(poll.st.t || DEFAULT_TITLE)
     + '&dates=' + dates + (hours ? '&ctz=Europe/Paris' : '')
@@ -2406,6 +2904,17 @@ document.addEventListener('click', (ev) => {
   const act = el.dataset.act;
   const hadFocus = document.activeElement === el;
   const refocus = () => { if (hadFocus) { const n = document.querySelector(focusSelector(el)); if (n) n.focus({ preventScroll: true }); } };
+  // Création : réglages, aperçu et dialogue d'un jour ou d'un séjour. Après un dessin complet, le focus revient au même bouton
+  // (ou au bouton OK du dialogue, si le bouton touché a disparu).
+  if ((view === 'create' || view === 'edit') && createAction(act, el) === 'repaint') {
+    const inDlg = cDlg && cDlg.contains(el);
+    if (hadFocus || inDlg) {
+      const n = (inDlg ? cDlg : document).querySelector(focusSelector(el));
+      if (n && !n.disabled) n.focus({ preventScroll: true });
+      else if (inDlg) { const ok = cDlg.querySelector('[data-act="dlg-close"]'); if (ok) ok.focus(); }
+    }
+    return;
+  }
   switch (act) {
     case 'theme': cycleTheme(); break;
     /* accueil */
@@ -2422,24 +2931,8 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'icon': draft.ic = el.dataset.ic; paintCreate(); refocus(); break;
-    case 'span': draft.e = draft.s + (+el.dataset.n) - 1; $('#c-end').value = ymd(draft.e, '-'); paintCreate(); refocus(); break;
-    case 'formule': draft.m = FORMULES[+el.dataset.k].m.slice(); paintCreate(); refocus(); break;
-    case 'mx-row': toggleMoment(+el.dataset.t); paintCreate(); refocus(); break;
-    case 'mx-col': toggleDay(+el.dataset.w); paintCreate(); refocus(); break;
-    case 'cell': draft.m[+el.dataset.w] = toggleBit(draft.m[+el.dataset.w], +el.dataset.t); paintCreate(); refocus(); break;
-    case 'day': openDay(+el.dataset.d); break;
-    case 'day-t': changeDay(toggleBit(draftRule(dayOpen), +el.dataset.t), `[data-act="day-t"][data-t="${el.dataset.t}"]`); break;
-    case 'day-none': setDay(dayOpen, 0); paintCreate(); dayDlg.close(); break; // on retire le jour et on referme
-    case 'day-reset': changeDay(draft.m[weekday(dayOpen)]); break;
-    case 'day-close': dayDlg.close(); break;
-    case 'add-hols': {
-      const added = addHolidays(); paintCreate();
-      // Le bouton disparaît : le focus passe au premier jour ajouté dans l'aperçu.
-      const n = added.length && $(`[data-act="day"][data-d="${added[0]}"]`); if (hadFocus && n) n.focus({ preventScroll: true });
-      showToast(added.length > 1 ? `${added.length} jours fériés proposés avec tous les moments.` : 'Jour férié proposé avec tous les moments.');
-      break;
-    }
-    case 'del-hols': removeHolidays(); paintCreate(); break;
+    case 'fmt': chooseFormat(el.dataset.k); break;
+    case 'span': draft.e = draft.s + (+el.dataset.n) - 1; draft.touched = true; paintCreate(true); refocus(); break;
     case 'guest-add': { const input = $('#c-guest'); addGuests(input.value); input.value = ''; paintCreate(); input.focus(); break; }
     case 'guest-del': { const name = draft.g[+el.dataset.k]; draft.g.splice(+el.dataset.k, 1); draft.r.delete(norm(name)); paintCreate(); break; }
     case 'guest-star': { const key = norm(draft.g[+el.dataset.k]); if (draft.r.has(key)) draft.r.delete(key); else draft.r.add(key); paintCreate(); refocus(); break; }
@@ -2568,10 +3061,12 @@ function onDateChange(t) {
   if (t.id === 'c-start') {
     const len = Number.isFinite(draft.e) && Number.isFinite(draft.s) ? draft.e - draft.s : 27;
     draft.s = v;
+    draft.touched = true;
     // La fin suit le début : la durée choisie est conservée.
     if (Number.isFinite(v) && (!Number.isFinite(draft.e) || draft.e < v)) { draft.e = v + Math.max(0, len); $('#c-end').value = ymd(draft.e, '-'); }
   } else if (t.id === 'c-end') {
     draft.e = v;
+    draft.touched = true;
   } else {
     draft.dl = t.value ? v : null;
   }
@@ -2588,6 +3083,14 @@ app.addEventListener('input', (ev) => {
     if (t.id === 'c-pin') { draft.pin = digits; paintCreate(); }
   }
   else if (t.id === 'c-start' || t.id === 'c-end' || t.id === 'c-dl') onDateChange(t);
+  else if (t.id === 'sp-a' || t.id === 'sp-b') {
+    // Curseur d'un séjour : les poignées ne se croisent pas ; une semaine commence dans la première semaine du curseur.
+    const f = draft.fmt, sp = draft.span[f], n = SPAN_DAYS[f].length * 2;
+    if (t.id === 'sp-a') { sp.s = Math.min(+t.value, sp.e - 1, f === 'semaine' ? 13 : n - 1); t.value = sp.s; }
+    else { sp.e = Math.max(+t.value, sp.s + 1); t.value = sp.e; }
+    paintSpan();
+  }
+  else if (t.dataset.ri != null) { draft.ranges[+t.dataset.ri][+t.dataset.rp] = t.value; paintCreate(); }
   else if (t.id === 'ans-note') ui.note = t.value;
   else if (t.id === 'ans-name') {
     ui.name = t.value;
@@ -2604,6 +3107,7 @@ app.addEventListener('submit', (ev) => {
 app.addEventListener('change', (ev) => {
   const t = ev.target;
   if (t.id === 'c-start' || t.id === 'c-end' || t.id === 'c-dl') onDateChange(t);
+  else if (t.id === 'c-ponts') { draft.ponts = t.checked; paintCreate(); }
 });
 app.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;

@@ -28,7 +28,8 @@ import { verifyIdToken } from './auth.js';
 import {
   DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
   TRASH_DAYS, KEEP_MONTHS,
-  norm, weekday, parseYmd, ymd, buildSlots, slotsKey, isLate,
+  MAX_RANGES, STAY_MARGIN,
+  norm, weekday, parseYmd, ymd, buildSlots, slotsKey, slotTimes, slotEnd, slotId, isLate,
 } from '../public/shared.js';
 
 const MAX_BODY = 20000;
@@ -79,6 +80,10 @@ function newId(length = 10) {
 
 const cleanText = (v, max) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const slotCount = (cfg) => buildSlots(cfg).length;
+// Un créneau pour la page, jours en « AAAAMMJJ » (même forme que slotFromJson dans app.js).
+const slotJson = (sl) => ({
+  d: ymd(sl.d), t: sl.t, ...(sl.h ? { h: sl.h } : {}), ...(sl.d2 != null ? { d2: ymd(sl.d2), ah: sl.ah, bh: sl.bh } : {}),
+});
 
 /* ---------- Fichier agenda (.ics) ---------- */
 const icsText = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
@@ -107,11 +112,13 @@ const pollUrlOf = (url, id) => `${url.origin}/s/${id}`;
 // Une date choisie. L'identifiant ne dépend que du sondage : si la date change, l'agenda déplace le même événement.
 function icsEvent(id, cfg, slot, pollUrl, stampMs) {
   const day = ymd(slot.d);
-  const hours = MOMENT_HOURS[slot.t];
+  // Un moment a des horaires indicatifs, un horaire précis les siens ; « Journée » et un séjour durent des jours entiers.
+  const hours = slotTimes(slot);
+  const end = hours && hours[1] === '2400' ? `${ymd(slot.d + 1)}T000000` : hours ? `${day}T${hours[1]}00` : '';
   const when = hours
-    ? [`DTSTART;TZID=Europe/Paris:${day}T${hours[0]}00`, `DTEND;TZID=Europe/Paris:${day}T${hours[1]}00`]
-    : [`DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${ymd(slot.d + 1)}`];
-  const details = (cfg.n ? cfg.n + '\n\n' : '') + 'Horaires indicatifs. Sondage : ' + pollUrl;
+    ? [`DTSTART;TZID=Europe/Paris:${day}T${hours[0]}00`, `DTEND;TZID=Europe/Paris:${end}`]
+    : [`DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${ymd(slotEnd(slot) + 1)}`];
+  const details = (cfg.n ? cfg.n + '\n\n' : '') + (hours && !cfg.k ? 'Horaires indicatifs. ' : '') + 'Sondage : ' + pollUrl;
   return [
     'BEGIN:VEVENT',
     `UID:${id}@on-mange-quand`, // ancien nom du projet, gardé : sinon les agendas verraient de nouveaux événements
@@ -139,17 +146,31 @@ function icsCalendar(events, extra = []) {
 const fileSlug = (t) => norm(t).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'dispos';
 
 /* ---------- Réglages d'un sondage ---------- */
-// Champs : t nom, n précisions, l lieu, ic pictogramme, s/e période, m moments par jour de la semaine,
+// Champs : t nom, n précisions, l lieu, ic pictogramme, s/e période, k genre de créneaux (voir shared.js),
+// m moments (ou plages) par jour de la semaine, h plages d'horaires précis, j séjours et jr leurs réglages,
 // x jours exclus, a jours ajoutés (ancienne forme), o jours réglés à part, dl date limite de réponse, q nombre minimum de personnes,
 // g invités attendus, r invités indispensables. Les champs facultatifs vides ne sont pas enregistrés.
+const HHMM_RE = /^([01]\d|2[0-3])[0-5]\d$/;
 function validateConfig(b) {
   const s = parseYmd(b.s), e = parseYmd(b.e);
+  const kind = b.k === 'h' || b.k === 'j' ? b.k : '';
   if (!Number.isFinite(s) || !Number.isFinite(e)) throw new HttpError(400, 'Choisissez une date de début et une date de fin.');
   if (e < s) throw new HttpError(400, 'La date de fin doit être après la date de début.');
-  if (e - s >= MAX_DAYS) throw new HttpError(400, 'Période trop longue : 3 mois maximum.');
+  if (e - s >= MAX_DAYS + (kind === 'j' ? STAY_MARGIN : 0)) throw new HttpError(400, 'Période trop longue : 3 mois maximum.');
   if (!Array.isArray(b.m) || b.m.length !== 7 || !b.m.every(Number.isInteger)) throw new HttpError(400, 'Jours ou moments invalides.');
+  // Horaires précis : plages triées et sans doublon ; les bits de m et o suivent leur nouvel ordre.
+  let ranges = null, toSorted = (r) => r;
+  if (kind === 'h') {
+    if (!Array.isArray(b.h) || !b.h.length || b.h.length > MAX_RANGES) throw new HttpError(400, `Indiquez de 1 à ${MAX_RANGES} horaires.`);
+    const ok = (r) => Array.isArray(r) && r.length === 2 && HHMM_RE.test(r[0]) && (HHMM_RE.test(r[1]) || r[1] === '2400') && r[0] < r[1];
+    if (!b.h.every(ok)) throw new HttpError(400, 'Chaque horaire doit finir après son début.');
+    const key = (r) => r[0] + r[1];
+    ranges = [...new Set(b.h.map(key))].sort().map((k) => [k.slice(0, 4), k.slice(4)]);
+    const index = b.h.map((r) => ranges.findIndex((x) => key(x) === key(r)));
+    toSorted = (mask) => index.reduce((out, j, i) => (mask & (1 << i) ? out | (1 << j) : out), 0);
+  }
   // « Journée » couvre tout le jour : elle remplace les autres moments.
-  const moments = (r) => (r & 1 ? 1 : r & 31);
+  const moments = kind === 'h' ? toSorted : kind === 'j' ? () => 0 : (r) => (r & 1 ? 1 : r & 31);
   const m = b.m.map(moments);
   const allMoments = m.reduce((u, r) => u | r, 0);
   const offsets = (list, keep) => (Array.isArray(list)
@@ -176,6 +197,26 @@ function validateConfig(b) {
       own.push([o, r]);
     }
     if (own.length) cfg.o = own.sort((p, q) => p[0] - q[0]);
+  }
+  if (kind === 'h') { cfg.k = 'h'; cfg.h = ranges; }
+  if (kind === 'j') {
+    // Séjours : [a, b] en demi-journées depuis s, dans la période, triés, sans doublon. Les jours exclus ou réglés à part ne s'y appliquent pas.
+    const max = 2 * (e - s) + 1;
+    if (!Array.isArray(b.j) || b.j.length > MAX_SLOTS) throw new HttpError(400, 'Séjours invalides.');
+    const seen = new Set(), stays = [];
+    for (const p of b.j) {
+      if (!Array.isArray(p) || !Number.isInteger(p[0]) || !Number.isInteger(p[1]) || p[0] < 0 || p[1] < p[0] || p[1] > max) {
+        throw new HttpError(400, 'Séjours invalides.');
+      }
+      if (!seen.has(p[0] + ':' + p[1])) { seen.add(p[0] + ':' + p[1]); stays.push([p[0], p[1]]); }
+    }
+    Object.assign(cfg, { k: 'j', j: stays.sort((p, q) => p[0] - q[0] || p[1] - q[1]), x: [], a: [] });
+    delete cfg.o;
+    // Réglages qui ont produit les séjours (la page les reprend pour modifier) : week-end ou semaine, curseur, ponts.
+    const jr = b.jr;
+    if (Array.isArray(jr) && (jr[0] === 'w' || jr[0] === 's') && [jr[1], jr[2]].every((v) => Number.isInteger(v) && v >= 0 && v <= 28) && jr[1] < jr[2]) {
+      cfg.jr = [jr[0], jr[1], jr[2], jr[3] ? 1 : 0];
+    }
   }
   const place = cleanText(b.l, 80);
   if (place) cfg.l = place;
@@ -384,12 +425,13 @@ async function handleMe(request, env, url, parts) {
   if (!user) throw new HttpError(401, 'Connectez-vous pour voir cette page.');
   const method = request.method;
   if (parts.length === 3 && parts[2] === 'polls' && method === 'GET') {
-    // dd, dt : jour et moment choisis ; going : le compte y participe (la page s'en sert pour signaler les conflits).
+    // dd, dt : jour et moment choisis ; ds : le créneau choisi en entier (horaires précis, fin d'un séjour) ;
+    // going : le compte y participe (la page s'en sert pour signaler les conflits).
     return json({
       polls: (await accountPolls(env, user.uid)).map((p) => ({
         i: p.id, t: p.cfg.t, ic: p.cfg.ic || '', s: p.cfg.s, e: p.cfg.e, owner: p.owner, answers: p.answers,
         answered: p.answered, closed: p.closed || isLate(p.cfg),
-        ...(p.slot ? { dd: ymd(p.slot.d), dt: p.slot.t, going: p.going } : {}),
+        ...(p.slot ? { dd: ymd(p.slot.d), dt: p.slot.t, ds: slotJson(p.slot), going: p.going } : {}),
       })),
     });
   }
@@ -552,9 +594,10 @@ async function handleApi(request, env, url) {
       const next = validateConfig(body);
       // Le code reste réservé à l'organisateur connecté. Sans champ « pin », il ne change pas ; vide, il est retiré.
       const pin = acc.owner && 'pin' in body ? cleanPin(body.pin) : row.pin;
-      // Les dispos déjà données suivent leur créneau (même jour, même moment) ; celles des créneaux retirés sont perdues.
+      // Les dispos déjà données suivent leur créneau (même jour et même moment, mêmes horaires, même séjour) ;
+      // celles des créneaux retirés sont perdues.
       const oldSlots = buildSlots(cfg), newSlots = buildSlots(next);
-      const slotKey = (sl) => sl.d * 8 + sl.t;
+      const slotKey = slotId;
       const oldIndex = new Map(oldSlots.map((sl, i) => [slotKey(sl), i]));
       const remap = (ans) => newSlots.map((sl) => { const i = oldIndex.get(slotKey(sl)); return i == null ? '0' : ans[i] || '0'; }).join('');
       const finalSlot = row.final_idx == null ? null : oldSlots[row.final_idx];
