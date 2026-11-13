@@ -758,13 +758,8 @@ button.pill.heat:hover { border-color: var(--ink); }
 /* « Qui êtes-vous ? » : à l'ouverture du lien, avant le calendrier */
 .who-step { gap: 14px; }
 .who-step h2 { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.03em; }
-.who-sub { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin-bottom: -4px; }
 .who-step .chip, .sheet .chips .chip { padding-left: 5px; }
 .who-step .chip .avatar, .sheet .chips .avatar { width: 28px; height: 28px; font-size: 0.78rem; }
-.chip.done { color: var(--muted); }
-.chip.done > .ic { color: var(--yes); }
-.chip.done[aria-pressed="true"] { color: var(--bg); }
-.chip.done[aria-pressed="true"] > .ic { color: inherit; }
 .who-page > .btn.wide { margin-top: -6px; }
 .me-line { font-size: 0.92rem; color: var(--muted); }
 .me-line b { color: var(--ink); }

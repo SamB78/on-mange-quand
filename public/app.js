@@ -347,7 +347,8 @@ function freshUi(keep) {
     noteOpen: false,
     self: false,   // réponse au nom retenu sur l'appareil : « Envoyer » enregistre sans redemander le prénom
     whoAsk: false, // page « Qui êtes-vous ? » demandée (bouton pour répondre, « Changer »)
-    whoName: '',   // prénom tapé ou choisi sur cette page
+    whoPick: '',   // nom touché dans la liste de cette page
+    whoName: '',   // prénom tapé dans son champ (l'un ou l'autre : choisir un nom vide le champ, taper désélectionne)
     created: !!(keep && keep.created),
     autoDone: !!(keep && keep.autoDone), // l'ouverture d'office n'a lieu qu'une fois par sondage affiché
     whoDone: !!(keep && keep.whoDone),   // page « Qui êtes-vous ? » passée (Continuer ou Regarder les résultats)
@@ -1810,19 +1811,16 @@ function whoHint(name) {
     : `${p.n} a déjà répondu : vous retrouverez cette réponse pour la modifier.`;
 }
 function whoStepHTML(c) {
-  const st = c.st;
-  const pending = pendingGuests(st);
-  const done = c.people.filter((p) => p.edit !== false);
-  const chip = (name, mark = '') => `<button type="button" class="chip${mark ? ' done' : ''}" data-act="who-pick" data-name="${esc(name)}" aria-pressed="${norm(ui.whoName) === norm(name)}">${avatarHTML(name)}${esc(name)}${mark}</button>`;
-  const listed = pending.length || done.length;
+  // Une seule liste : d'abord les invités qui n'ont pas répondu (les plus susceptibles d'ouvrir le lien), puis ceux qui ont répondu.
+  const names = pendingGuests(c.st).concat(c.people.filter((p) => p.edit !== false).map((p) => p.n));
+  const chip = (name) => `<button type="button" class="chip" data-act="who-pick" data-name="${esc(name)}" aria-pressed="${norm(ui.whoPick) === norm(name)}">${avatarHTML(name)}${esc(name)}</button>`;
   return `<section class="card who-step" id="who-step" aria-labelledby="who-h">
       <h2 id="who-h">Qui êtes-vous&nbsp;?</h2>
-      ${pending.length ? `<div class="chips">${pending.map((n) => chip(n)).join('')}</div>` : ''}
-      ${done.length ? `<p class="who-sub">Ont déjà répondu</p><div class="chips">${done.map((p) => chip(p.n, icon('check', 15))).join('')}</div>` : ''}
+      ${names.length ? `<div class="chips">${names.map(chip).join('')}</div>` : ''}
       <div class="field">
-        ${listed ? '<label for="who-name">Pas dans la liste&nbsp;?</label>' : ''}
-        <input type="text" id="who-name" maxlength="40" autocomplete="given-name" placeholder="Votre prénom"${listed ? '' : ' aria-label="Votre prénom"'} value="${esc(ui.whoName)}">
-        <p class="hint" id="who-hint" aria-live="polite">${esc(whoHint(ui.whoName))}</p>
+        ${names.length ? '<label for="who-name">Pas dans la liste&nbsp;?</label>' : ''}
+        <input type="text" id="who-name" maxlength="40" autocomplete="given-name" placeholder="Votre prénom"${names.length ? '' : ' aria-label="Votre prénom"'} value="${esc(ui.whoName)}">
+        <p class="hint" id="who-hint" aria-live="polite">${esc(whoHint(ui.whoPick || ui.whoName))}</p>
       </div>
       <button type="button" class="btn primary lg wide" data-act="who-go">Continuer${icon('right', 18)}</button>
     </section>
@@ -1832,7 +1830,7 @@ function whoStepHTML(c) {
 // « Continuer » : un prénom qui a déjà répondu rouvre sa réponse, un nouveau prénom ouvre le calendrier à son nom.
 function whoGo() {
   const input = $('#who-name'), hint = $('#who-hint');
-  const name = input.value.trim().replace(/\s+/g, ' ');
+  const name = (ui.whoPick || input.value).trim().replace(/\s+/g, ' ');
   const fail = (msg) => { hint.textContent = msg; hint.classList.add('error'); input.focus(); };
   if (!name) return fail('Choisissez votre prénom dans la liste, ou tapez-le.');
   const p = poll.st.p.find((x) => norm(x.n) === norm(name));
@@ -1891,7 +1889,7 @@ function renderPoll() {
     <div id="people-slot">${g ? '' : peopleHTML(c)}</div>`}
   </div>`;
   paintSheet();
-  if (who && !ui.whoName && !matchMedia('(pointer: coarse)').matches && !pendingGuests(st).length && !c.people.length) $('#who-name').focus();
+  if (who && !ui.whoName && !ui.whoPick && !matchMedia('(pointer: coarse)').matches && !pendingGuests(st).length && !c.people.length) $('#who-name').focus();
 }
 
 // Mise à jour discrète quand d'autres personnes ont répondu : on ne touche pas au formulaire ouvert.
@@ -3148,10 +3146,12 @@ document.addEventListener('click', (ev) => {
     case 'close-answer': ui = freshUi(ui); renderPoll(); scrollToId('mine-slot'); break;
     case 'send': if (ui.self) saveAnswer(el); else { ui.sheet = 'name'; paintSheet(); } break;
     case 'who-pick': {
-      ui.whoName = el.dataset.name;
-      $('#who-name').value = ui.whoName;
-      const h = $('#who-hint'); h.classList.remove('error'); h.textContent = whoHint(ui.whoName);
-      document.querySelectorAll('[data-act="who-pick"]').forEach((b) => b.setAttribute('aria-pressed', String(b === el)));
+      // Toucher un nom le choisit (le toucher à nouveau le retire) ; le champ du prénom se vide.
+      ui.whoPick = norm(ui.whoPick) === norm(el.dataset.name) ? '' : el.dataset.name;
+      ui.whoName = '';
+      $('#who-name').value = '';
+      const h = $('#who-hint'); h.classList.remove('error'); h.textContent = whoHint(ui.whoPick);
+      document.querySelectorAll('[data-act="who-pick"]').forEach((b) => b.setAttribute('aria-pressed', String(!!ui.whoPick && b === el)));
       break;
     }
     case 'who-go': whoGo(); break;
@@ -3317,11 +3317,15 @@ document.addEventListener('input', (ev) => {
   else if (t.dataset.ri != null) { draft.ranges[+t.dataset.ri][+t.dataset.rp] = t.value; paintCreate(); }
   else if (t.id === 'ans-note') ui.note = t.value;
   else if (t.id === 'who-name') {
+    // Taper un prénom retire le nom choisi dans la liste.
     ui.whoName = t.value;
+    if (t.value.trim()) {
+      ui.whoPick = '';
+      document.querySelectorAll('[data-act="who-pick"]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+    }
     const h = $('#who-hint');
     h.classList.remove('error');
-    h.textContent = whoHint(t.value);
-    document.querySelectorAll('[data-act="who-pick"]').forEach((b) => b.setAttribute('aria-pressed', String(norm(b.dataset.name) === norm(t.value))));
+    h.textContent = whoHint(ui.whoPick || t.value);
   }
   else if (t.id === 'ans-name') {
     ui.name = t.value;
