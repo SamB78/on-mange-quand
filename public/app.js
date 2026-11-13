@@ -345,8 +345,12 @@ function freshUi(keep) {
     peek: false,   // résultats affichés avant d'avoir répondu
     allCal: false, // calendrier complet des résultats déplié
     noteOpen: false,
+    self: false,   // réponse au nom retenu sur l'appareil : « Envoyer » enregistre sans redemander le prénom
+    whoAsk: false, // page « Qui êtes-vous ? » demandée (bouton pour répondre, « Changer »)
+    whoName: '',   // prénom tapé ou choisi sur cette page
     created: !!(keep && keep.created),
     autoDone: !!(keep && keep.autoDone), // l'ouverture d'office n'a lieu qu'une fois par sondage affiché
+    whoDone: !!(keep && keep.whoDone),   // page « Qui êtes-vous ? » passée (Continuer ou Regarder les résultats)
   };
 }
 
@@ -1767,10 +1771,11 @@ function pendingGuests(st) {
 }
 const isMust = (st, name) => (st.r || []).some((x) => norm(x) === norm(name));
 
-function factsHTML(c) {
+function factsHTML(c, period) {
   const st = c.st;
   const facts = [];
   if (st.l) facts.push([icon('place', 16), esc(st.l)]);
+  if (period) facts.push([icon('calendar', 16), `${plural(c.slots.length, 'créneau', 'créneaux')}, du ${fmt(fShort, parseYmd(st.s))} au ${fmt(fShort, parseYmd(st.e))}`]);
   if (st.dl) facts.push([icon('clock', 16), st.late ? `Réponses closes depuis le ${fmt(fLong, parseYmd(st.dl))}` : `Réponses jusqu’au ${fmt(fLong, parseYmd(st.dl))}`]);
   return facts.map(([ic, text]) => `<li>${ic}<span>${text}</span></li>`).join('');
 }
@@ -1787,6 +1792,66 @@ function autoOpen(c) {
   if (c.st.closed || c.st.late || finalIndex(c.slots) >= 0 || myAnswer(c.people)) return;
   openAnswer(null);
   ui.auto = true;
+  if (getMe()) { ui.name = getMe(); ui.self = true; }
+}
+// Page « Qui êtes-vous ? » : à l'ouverture du lien, quand l'appareil ne connaît pas encore la personne
+// (ni prénom retenu, ni compte, ni réponse), et chaque fois qu'on la redemande (« Changer », bouton pour répondre).
+function needsWho(c) {
+  if (ui.open || ui.created || auth.user || getMe() || myAnswer(c.people)) return false;
+  if (ui.whoAsk) return true;
+  if (ui.whoDone) return false;
+  return !(c.st.closed || c.st.late || isDecided(c));
+}
+function whoHint(name) {
+  const p = name.trim() && poll.st.p.find((x) => norm(x.n) === norm(name));
+  if (!p) return '';
+  return p.edit === false
+    ? `${p.n} a répondu avec son compte : connectez-vous pour modifier sa réponse, ou choisissez un autre prénom.`
+    : `${p.n} a déjà répondu : vous retrouverez cette réponse pour la modifier.`;
+}
+function whoStepHTML(c) {
+  const st = c.st;
+  const pending = pendingGuests(st);
+  const done = c.people.filter((p) => p.edit !== false);
+  const chip = (name, mark = '') => `<button type="button" class="chip${mark ? ' done' : ''}" data-act="who-pick" data-name="${esc(name)}" aria-pressed="${norm(ui.whoName) === norm(name)}">${avatarHTML(name)}${esc(name)}${mark}</button>`;
+  const listed = pending.length || done.length;
+  return `<section class="card who-step" id="who-step" aria-labelledby="who-h">
+      <h2 id="who-h">Qui êtes-vous&nbsp;?</h2>
+      ${pending.length ? `<div class="chips">${pending.map((n) => chip(n)).join('')}</div>` : ''}
+      ${done.length ? `<p class="who-sub">Ont déjà répondu</p><div class="chips">${done.map((p) => chip(p.n, icon('check', 15))).join('')}</div>` : ''}
+      <div class="field">
+        ${listed ? '<label for="who-name">Pas dans la liste&nbsp;?</label>' : ''}
+        <input type="text" id="who-name" maxlength="40" autocomplete="given-name" placeholder="Votre prénom"${listed ? '' : ' aria-label="Votre prénom"'} value="${esc(ui.whoName)}">
+        <p class="hint" id="who-hint" aria-live="polite">${esc(whoHint(ui.whoName))}</p>
+      </div>
+      <button type="button" class="btn primary lg wide" data-act="who-go">Continuer${icon('right', 18)}</button>
+    </section>
+    ${c.people.length ? '<button type="button" class="btn wide" data-act="who-look">Regarder les résultats</button>' : ''}
+    <p class="hint center">${poll.example ? 'Dans l’exemple, rien n’est retenu.' : 'Votre prénom reste sur cet appareil&nbsp;: la prochaine fois, vous arriverez directement sur vos dispos.'}</p>`;
+}
+// « Continuer » : un prénom qui a déjà répondu rouvre sa réponse, un nouveau prénom ouvre le calendrier à son nom.
+function whoGo() {
+  const input = $('#who-name'), hint = $('#who-hint');
+  const name = input.value.trim().replace(/\s+/g, ' ');
+  const fail = (msg) => { hint.textContent = msg; hint.classList.add('error'); input.focus(); };
+  if (!name) return fail('Choisissez votre prénom dans la liste, ou tapez-le.');
+  const p = poll.st.p.find((x) => norm(x.n) === norm(name));
+  if (p && p.edit === false) return fail(whoHint(name));
+  if (!poll.example) remember(poll.st, p ? p.n : name);
+  ui.whoDone = true;
+  ui.whoAsk = false;
+  if (p) openAnswer(p.n);
+  else { openAnswer(null); ui.name = name; ui.self = true; ui.auto = true; }
+  renderPoll();
+  window.scrollTo(0, 0);
+}
+// « Changer » : on oublie le prénom retenu et on revient à la page « Qui êtes-vous ? ».
+function whoChange() {
+  if (!poll.example) remember(poll.st, null);
+  ui = freshUi(ui);
+  ui.whoAsk = true;
+  renderPoll();
+  window.scrollTo(0, 0);
 }
 // Tant qu'on n'a pas répondu, les résultats restent repliés : l'envie de les voir pousse à répondre,
 // et on répond sans se caler sur les autres. L'organisateur et l'exemple les voient toujours.
@@ -1796,20 +1861,23 @@ const isDecided = (c) => finalIndex(c.slots) >= 0;
 function renderPoll() {
   const c = ctx();
   const st = c.st;
-  autoOpen(c);
+  const who = needsWho(c);
+  // La page « Qui êtes-vous ? » remplace l'ouverture d'office : c'est elle qui ouvre (ou non) le calendrier.
+  if (who) ui.autoDone = true; else autoOpen(c);
   document.title = (st.t || DEFAULT_TITLE) + ' · ' + SITE_NAME;
   renderTopnav();
   const g = gated(c), decided = isDecided(c);
   const manage = !poll.example && st.canManage;
-  app.innerHTML = `<div class="page narrow poll">
+  app.innerHTML = `<div class="page narrow poll${who ? ' who-page' : ''}">
     ${poll.example ? `<div class="banner"><p><b>Ceci est un exemple.</b> Les réponses sont fictives, rien n’est enregistré&nbsp;: essayez tout.</p><a class="btn sm primary" href="/nouveau">Créer mon sondage</a></div>` : ''}
     <header class="p-head">
       <div class="p-top"><span class="p-icon" aria-hidden="true">${esc(st.ic || ICONS[0])}</span>
         ${manage ? `<button type="button" class="btn sm" data-act="manage" aria-haspopup="dialog">${icon('more')}Gérer</button>` : ''}</div>
       <h1>${esc(st.t || DEFAULT_TITLE)}</h1>
       ${st.n ? `<p class="p-note">${esc(st.n)}</p>` : ''}
-      <ul class="facts" id="facts">${factsHTML(c)}</ul>
+      <ul class="facts" id="facts">${factsHTML(c, who)}</ul>
     </header>
+    ${who ? whoStepHTML(c) : `
     ${st.closed || st.late ? `<div class="banner calm"><p>${st.closed ? 'Sondage clôturé' : 'Date limite passée'}&nbsp;: les réponses ne changent plus${st.isOwner ? ', sauf par vous' : ''}.${manage && !st.owned
       ? (st.closed ? ' Pour le rouvrir&nbsp;: «&nbsp;Gérer&nbsp;».' : ' Pour repousser la date limite&nbsp;: «&nbsp;Gérer&nbsp;», puis «&nbsp;Modifier&nbsp;».')
       : ''}</p></div>` : ''}
@@ -1820,14 +1888,16 @@ function renderPoll() {
     <div id="teaser-slot">${g ? teaserHTML(c) : ''}</div>
     <div id="verdict-slot">${!decided && !g ? verdictHTML(c) : ''}</div>
     <div id="results-slot">${g ? '' : resultsHTML(c)}</div>
-    <div id="people-slot">${g ? '' : peopleHTML(c)}</div>
+    <div id="people-slot">${g ? '' : peopleHTML(c)}</div>`}
   </div>`;
   paintSheet();
+  if (who && !ui.whoName && !matchMedia('(pointer: coarse)').matches && !pendingGuests(st).length && !c.people.length) $('#who-name').focus();
 }
 
 // Mise à jour discrète quand d'autres personnes ont répondu : on ne touche pas au formulaire ouvert.
 function renderLive() {
   const c = ctx();
+  if (document.getElementById('who-step')) return;
   if (!document.getElementById('verdict-slot')) return renderPoll();
   const g = gated(c), decided = isDecided(c);
   $('#facts').innerHTML = factsHTML(c);
@@ -1848,18 +1918,18 @@ function mineHTML(c) {
   if (meP) {
     const canEdit = meP.edit !== false && !frozen;
     return `<div class="mine${ui.savedName ? ' fresh' : ''}" role="status">${icon('check', 20)}
-      <span>${ui.savedName ? `Merci ${esc(ui.savedName)}, c’est noté&nbsp;!` : `Vous avez répondu (${esc(meP.n)})`}</span>
+      <span>${ui.savedName ? `Merci ${esc(ui.savedName)}, c’est noté&nbsp;!` : `Vous avez répondu (${esc(meP.n)}).${meP.mine ? '' : ' <button type="button" class="linkbtn" data-act="who-change">Pas vous&nbsp;?</button>'}`}</span>
       ${canEdit ? `<button type="button" class="btn sm" data-act="edit" data-name="${esc(meP.n)}">${icon('edit', 15)}Modifier</button>` : ''}
     </div>`;
   }
   if (frozen) return '';
-  return `<button type="button" class="btn${isDecided(c) ? '' : ' primary'} lg wide" data-act="open-answer">Indiquer mes dispos</button>`;
+  return `<button type="button" class="btn${isDecided(c) ? '' : ' primary'} lg wide" data-act="answer-me">Indiquer mes dispos</button>`;
 }
 
 // Ceux qui ont déjà répondu, en visages, et ceux qu'on attend encore.
 function proofHTML(c) {
   const names = c.people.map((p) => p.n);
-  const wait = pendingGuests(c.st);
+  const wait = pendingGuests(c.st).map((n) => (ui.self && norm(n) === norm(ui.name) ? 'vous' : n)).sort((a, b) => (a === 'vous') - (b === 'vous'));
   const waitText = wait.length && wait.length <= 3 ? ` Plus que ${esc(list(wait))}&nbsp;!` : wait.length ? ` Encore ${wait.length} invités attendus.` : '';
   if (!names.length) return `<p class="proof">Personne n’a encore répondu&nbsp;: à vous de commencer&nbsp;!</p>`;
   const who = names.length <= 3 ? list(names) : `${names.slice(0, 2).join(', ')} et ${names.length - 2} autres`;
@@ -2038,18 +2108,25 @@ function answerHTML(c) {
   return `${ui.editing || ui.forName ? '' : `<div id="proof-slot">${proofHTML(c)}</div>`}
     <section class="ask" id="answer" aria-labelledby="a-h">
       <div class="row-between"><h2 id="a-h">${title}</h2>${ui.auto ? '' : `<button type="button" class="iconbtn" data-act="close-answer" aria-label="Annuler" title="Annuler">${icon('x')}</button>`}</div>
+      ${ui.self || (own && !mine.mine) ? `<p class="me-line">Vous répondez en tant que <b>${esc(ui.self ? ui.name : ui.editing)}</b>. <button type="button" class="linkbtn" data-act="who-change">Changer</button></p>` : ''}
       <p class="how">${stays ? `Touchez ${st.jr && st.jr[0] === 's' ? 'une semaine' : 'un week-end'}` : 'Touchez vos créneaux'}&nbsp;: <span class="mini s1">✓ dispo</span> une fois, <span class="mini s2">~ si besoin</span> deux fois.</p>
       <div class="quick">${bulkHTML()}<span class="agenda-tools" id="ans-agenda" aria-live="polite">${agendaToolsHTML()}</span></div>
       ${!multi && !stays ? `<p class="cal-cap">${momentCap(st, moments[0])}</p>` : ''}
       ${slotsView(slots, (i) => answerPill(i, multi), {
         headHTML: (w) => `<button type="button" class="cal-wd tap" data-act="fill-wd" data-w="${w}" aria-label="Tous les ${WD_LONG[w]}s">${WD[w]}</button>`,
       })}
+      ${ui.self ? `<div id="ans-note-box">${noteBoxHTML()}</div>` : ''}
     </section>
     <div class="dock" role="region" aria-label="Envoyer la réponse"><div class="dock-in">
       <p class="dock-txt" id="ans-count" aria-live="polite">${answerCountText()}</p>
       <button type="button" class="btn primary lg" data-act="send" aria-haspopup="dialog">${ui.editing ? 'Enregistrer' : 'Envoyer'}${icon('right', 18)}</button>
     </div></div>`;
 }
+
+// Petit mot facultatif, replié derrière un lien.
+const noteBoxHTML = () => (ui.noteOpen || ui.note
+  ? `<div class="field"><label for="ans-note">Un petit mot <span class="opt">(facultatif)</span></label><input type="text" id="ans-note" maxlength="${MAX_NOTE}" placeholder="Dispo seulement après 20 h" autocomplete="off" value="${esc(ui.note)}"></div>`
+  : '<button type="button" class="linkbtn" data-act="note-open">+ Ajouter un petit mot</button>');
 
 /* ---------- Fenêtres du bas : le prénom avant l'envoi, le menu « Gérer » ---------- */
 function nameSheetHTML() {
@@ -2075,9 +2152,7 @@ function nameSheetHTML() {
       <input type="text" id="ans-name" maxlength="40" autocomplete="given-name"${ui.editing ? '' : ' aria-label="Prénom"'} placeholder="${pending.length ? 'Ou un autre prénom' : 'Votre prénom'}" value="${esc(ui.name)}"${!ui.name && !pending.length ? ' autofocus' : ''}>
       <p class="hint" id="ans-hint" aria-live="polite">${esc(nameHint(ui.name))}</p>
     </div>
-    ${ui.noteOpen || ui.note
-      ? `<div class="field"><label for="ans-note">Un petit mot <span class="opt">(facultatif)</span></label><input type="text" id="ans-note" maxlength="${MAX_NOTE}" placeholder="Dispo seulement après 20 h" autocomplete="off" value="${esc(ui.note)}"></div>`
-      : '<button type="button" class="linkbtn" data-act="note-open">+ Ajouter un petit mot</button>'}
+    ${noteBoxHTML()}
     ${del}
     <button type="button" class="btn primary lg wide" data-act="save"${ui.name || pending.length ? ' autofocus' : ''}>${ui.editing ? 'Enregistrer' : 'Envoyer mes dispos'}</button>
     ${foot ? `<p class="hint center">${foot}</p>` : ''}`;
@@ -2507,20 +2582,17 @@ async function runAction(btn, label, fn) {
 
 function saveAnswer(btn) {
   const name = ui.name.trim().replace(/\s+/g, ' ');
-  const hint = $('#ans-hint');
-  if (!name) {
-    hint.textContent = 'Indiquez votre prénom pour enregistrer.';
+  // Un souci de prénom s'affiche dans la fenêtre du prénom, ouverte au besoin.
+  const fail = (msg) => {
+    if (!$('#ans-hint')) { ui.sheet = 'name'; paintSheet(); }
+    const hint = $('#ans-hint');
+    hint.textContent = msg;
     hint.classList.add('error');
     $('#ans-name').focus();
-    return;
-  }
+  };
+  if (!name) return fail('Indiquez votre prénom pour enregistrer.');
   const clash = poll.st.p.find((p) => norm(p.n) === norm(name) && p.edit === false);
-  if (clash) {
-    hint.textContent = nameHint(name);
-    hint.classList.add('error');
-    $('#ans-name').focus();
-    return;
-  }
+  if (clash) return fail(nameHint(name));
   return runAction(btn, 'Enregistrement…', async () => {
     const answering = ui.editing;
     await mutate('save', { name, ans: ui.vals.join(''), note: ui.note.trim().replace(/\s+/g, ' '), prev: ui.editing });
@@ -3074,9 +3146,33 @@ document.addEventListener('click', (ev) => {
     case 'open-answer': openAnswer(el.dataset.name || null); renderPoll(); scrollToId('answer'); break;
     case 'edit': openAnswer(el.dataset.name); renderPoll(); scrollToId('answer'); break;
     case 'close-answer': ui = freshUi(ui); renderPoll(); scrollToId('mine-slot'); break;
-    case 'send': ui.sheet = 'name'; paintSheet(); break;
+    case 'send': if (ui.self) saveAnswer(el); else { ui.sheet = 'name'; paintSheet(); } break;
+    case 'who-pick': {
+      ui.whoName = el.dataset.name;
+      $('#who-name').value = ui.whoName;
+      const h = $('#who-hint'); h.classList.remove('error'); h.textContent = whoHint(ui.whoName);
+      document.querySelectorAll('[data-act="who-pick"]').forEach((b) => b.setAttribute('aria-pressed', String(b === el)));
+      break;
+    }
+    case 'who-go': whoGo(); break;
+    case 'who-look': ui.whoDone = true; ui.whoAsk = false; renderPoll(); window.scrollTo(0, 0); break;
+    case 'who-change': whoChange(); break;
+    case 'answer-me':
+      // Sans prénom connu, on passe par « Qui êtes-vous ? » ; sinon le calendrier s'ouvre à son nom.
+      if (!auth.user && !getMe() && !ui.created) { ui.whoAsk = true; renderPoll(); window.scrollTo(0, 0); break; }
+      openAnswer(null);
+      if (getMe()) { ui.name = getMe(); ui.self = true; }
+      renderPoll();
+      scrollToId('answer');
+      break;
     case 'sheet-close': closeSheet(); break;
-    case 'note-open': ui.noteOpen = true; paintSheet(); { const n = $('#ans-note'); if (n) n.focus(); } break;
+    case 'note-open': {
+      ui.noteOpen = true;
+      if (ui.sheet) paintSheet();
+      else { const box = $('#ans-note-box'); if (box) box.innerHTML = noteBoxHTML(); }
+      const n = $('#ans-note'); if (n) n.focus();
+      break;
+    }
     case 'peek': ui.peek = true; renderLive(); scrollToId('verdict-slot'); break;
     case 'all-cal': ui.allCal = true; repaintResults(); break;
     case 'manage': ui.sheet = 'manage'; paintSheet(); break;
@@ -3220,6 +3316,13 @@ document.addEventListener('input', (ev) => {
   }
   else if (t.dataset.ri != null) { draft.ranges[+t.dataset.ri][+t.dataset.rp] = t.value; paintCreate(); }
   else if (t.id === 'ans-note') ui.note = t.value;
+  else if (t.id === 'who-name') {
+    ui.whoName = t.value;
+    const h = $('#who-hint');
+    h.classList.remove('error');
+    h.textContent = whoHint(t.value);
+    document.querySelectorAll('[data-act="who-pick"]').forEach((b) => b.setAttribute('aria-pressed', String(norm(b.dataset.name) === norm(t.value))));
+  }
   else if (t.id === 'ans-name') {
     ui.name = t.value;
     const h = $('#ans-hint');
@@ -3239,9 +3342,12 @@ app.addEventListener('change', (ev) => {
 });
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;
-  if (ev.target.id === 'ans-name' || ev.target.id === 'ans-note') {
+  if (ev.target.id === 'who-name') {
     ev.preventDefault();
-    saveAnswer($('[data-act="save"]'));
+    whoGo();
+  } else if (ev.target.id === 'ans-name' || ev.target.id === 'ans-note') {
+    ev.preventDefault();
+    saveAnswer($('[data-act="save"]') || $('[data-act="send"]'));
   } else if (ev.target.id === 'c-guest') {
     ev.preventDefault();
     addGuests(ev.target.value);

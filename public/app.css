@@ -755,6 +755,22 @@ button.pill.heat:hover { border-color: var(--ink); }
 .mine.fresh { background: var(--yes-soft); color: var(--yes); font-weight: 700; }
 .mine .btn { color: var(--ink); }
 
+/* « Qui êtes-vous ? » : à l'ouverture du lien, avant le calendrier */
+.who-step { gap: 14px; }
+.who-step h2 { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.03em; }
+.who-sub { font-size: 0.85rem; font-weight: 600; color: var(--muted); margin-bottom: -4px; }
+.who-step .chip, .sheet .chips .chip { padding-left: 5px; }
+.who-step .chip .avatar, .sheet .chips .avatar { width: 28px; height: 28px; font-size: 0.78rem; }
+.chip.done { color: var(--muted); }
+.chip.done > .ic { color: var(--yes); }
+.chip.done[aria-pressed="true"] { color: var(--bg); }
+.chip.done[aria-pressed="true"] > .ic { color: inherit; }
+.who-page > .btn.wide { margin-top: -6px; }
+.me-line { font-size: 0.92rem; color: var(--muted); }
+.me-line b { color: var(--ink); }
+.me-line .linkbtn, .mine .linkbtn { min-height: 0; padding: 0; font-size: inherit; }
+.mine .linkbtn { font-weight: 500; }
+
 /* Ceux qui ont déjà répondu, au-dessus des créneaux */
 .proof { display: flex; align-items: center; gap: 12px; font-size: 0.95rem; }
 p.proof { color: var(--muted); }
@@ -853,8 +869,6 @@ dialog.sheet::backdrop { background: rgba(10, 10, 12, 0.5); }
 .sheet-head .iconbtn { margin: -2px -8px 0 0; }
 .recap { color: var(--muted); font-size: 0.93rem; margin-top: -6px; }
 .sheet .linkbtn { align-self: flex-start; }
-.sheet .chips .chip { padding-left: 5px; }
-.sheet .chips .avatar { width: 28px; height: 28px; font-size: 0.78rem; }
 .menu { display: flex; flex-direction: column; margin: 0 -8px; }
 .menu-i {
   display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 10px 8px; border: 0; border-radius: 12px; background: none;
