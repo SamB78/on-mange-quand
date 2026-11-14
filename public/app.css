@@ -715,6 +715,8 @@ button.pill.heat:hover { border-color: var(--ink); }
 .page.poll > div:empty { display: none; }
 .page.poll * { scroll-margin-top: 80px; }
 #answer-slot { display: flex; flex-direction: column; gap: 18px; }
+/* La colonne du sondage est déjà étroite : calendrier et séjours en occupent toute la largeur, alignés sur le reste. */
+.page.poll .cal, .page.poll .stays { max-width: none; }
 
 .verdict {
   background: var(--surface); border: 2px solid var(--ink); border-radius: 22px; padding: 24px;
