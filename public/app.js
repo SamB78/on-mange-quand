@@ -306,14 +306,30 @@ function slotsByDay(slots) {
   return map;
 }
 // Grille d'un sondage : une case par jour, avec une pastille par créneau (pillHTML(i)).
+// Dans une même semaine, chaque moment (ou horaire) garde sa ligne : un jour sans « Midi » laisse sa place vide,
+// pour que les « Soir » de la semaine tombent à la même hauteur.
 function slotCal(slots, pillHTML, opts) {
   const byDay = slotsByDay(slots);
+  const weekKeys = new Map();
+  for (const sl of slots) {
+    const w0 = sl.d - weekday(sl.d);
+    if (!weekKeys.has(w0)) weekKeys.set(w0, new Set());
+    weekKeys.get(w0).add(sl.t);
+  }
   return calGrid(slots[0].d, slots[slots.length - 1].d, usedCols(slots), (d) => {
     const hol = holiday(d);
-    const num = `<span class="day-n"${hol ? ` title="${esc(hol)}"` : ''}>${dateOf(d)}</span>`;
     const idx = byDay.get(d);
-    if (!idx) return `<span class="day off${hol ? ' hol' : ''}">${num}</span>`;
-    return `<div class="day${hol ? ' hol' : ''}${d === todayDay ? ' today' : ''}">${num}${idx.map(pillHTML).join('')}</div>`;
+    if (!idx) return `<span class="day off${hol ? ' hol' : ''}"><span class="day-n"${hol ? ` title="${esc(hol)}"` : ''}>${dateOf(d)}</span></span>`;
+    // Jour férié et aujourd'hui : dits en toutes lettres à côté du numéro (le nom du férié au survol).
+    const today = d === todayDay;
+    const tag = hol ? '<small class="day-tag">férié</small>' : today ? '<small class="day-tag">auj.</small>' : '';
+    const num = `<span class="day-n"${hol ? ` title="${esc(hol)}"` : today ? ' title="Aujourd’hui"' : ''}>${dateOf(d)}${tag}</span>`;
+    const keys = [...weekKeys.get(d - weekday(d))].sort((x, y) => x - y);
+    const cells = keys.map((t) => {
+      const i = idx.find((j) => slots[j].t === t);
+      return i == null ? '<span class="pill gap" aria-hidden="true"></span>' : pillHTML(i);
+    });
+    return `<div class="day${hol ? ' hol' : ''}${today ? ' today' : ''}">${num}${cells.join('')}</div>`;
   }, Object.assign({ has: (d) => byDay.has(d) }, opts));
 }
 

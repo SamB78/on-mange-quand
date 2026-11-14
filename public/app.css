@@ -635,7 +635,10 @@ button.band:hover { border-color: var(--ink); }
 .day { min-width: 0; border-radius: 12px; padding: 5px 4px 4px; display: flex; flex-direction: column; gap: 4px; background: var(--surface-2); }
 .day.void { background: none; }
 .day.off { background: none; }
-.day-n { font-size: 0.76rem; font-weight: 700; color: var(--muted); text-align: center; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.day-n { font-size: 0.76rem; font-weight: 700; color: var(--muted); text-align: center; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-tag { font-size: 0.66rem; font-weight: 600; margin-left: 4px; }
+.day.hol .day-n:has(.day-tag) { text-decoration: none; }
+.pill.gap { visibility: hidden; }
 .day.off .day-n { opacity: 0.45; font-weight: 500; }
 .day.hol .day-n { color: var(--hol); opacity: 1; text-decoration: underline dotted; text-underline-offset: 2px; }
 .day.today .day-n { color: var(--accent-deep); }
