@@ -1811,10 +1811,11 @@ function autoOpen(c) {
   ui.auto = true;
   if (getMe()) { ui.name = getMe(); ui.self = true; }
 }
-// Page « Qui êtes-vous ? » : à l'ouverture du lien, quand l'appareil ne connaît pas encore la personne
-// (ni prénom retenu, ni compte, ni réponse), et chaque fois qu'on la redemande (« Changer », bouton pour répondre).
+// Page « Qui êtes-vous ? » : à l'ouverture du lien, quand l'appareil ne sait pas qui regarde (ni prénom retenu, ni réponse
+// liée au compte), et chaque fois qu'on la redemande (« Changer », bouton pour répondre). Même connecté : le nom du compte
+// ne dit pas sous quel nom on a répondu (« Sam et Alice », réponse donnée avant de se connecter ou sur un autre appareil).
 function needsWho(c) {
-  if (ui.open || ui.created || auth.user || getMe() || myAnswer(c.people)) return false;
+  if (ui.open || getMe() || myAnswer(c.people)) return false;
   if (ui.whoAsk) return true;
   if (ui.whoDone) return false;
   return !(c.st.closed || c.st.late || isDecided(c));
@@ -1891,11 +1892,11 @@ function renderPoll() {
       ${st.n ? `<p class="p-note">${esc(st.n)}</p>` : ''}
       <ul class="facts" id="facts">${factsHTML(c, who)}</ul>
     </header>
+    ${!poll.example && ui.created ? shareHTML() : ''}
     ${who ? whoStepHTML(c) : `
     ${st.closed || st.late ? `<div class="banner calm"><p>${st.closed ? 'Sondage clôturé' : 'Date limite passée'}&nbsp;: les réponses ne changent plus${st.isOwner ? ', sauf par vous' : ''}.${manage && !st.owned
       ? (st.closed ? ' Pour le rouvrir&nbsp;: «&nbsp;Gérer&nbsp;».' : ' Pour repousser la date limite&nbsp;: «&nbsp;Gérer&nbsp;», puis «&nbsp;Modifier&nbsp;».')
       : ''}</p></div>` : ''}
-    ${!poll.example && ui.created ? shareHTML() : ''}
     <div id="verdict-top">${decided ? verdictHTML(c) : ''}</div>
     <div id="mine-slot">${ui.open ? '' : mineHTML(c)}</div>
     <div id="answer-slot">${ui.open ? answerHTML(c) : ''}</div>
@@ -3175,7 +3176,7 @@ document.addEventListener('click', (ev) => {
     case 'who-change': whoChange(); break;
     case 'answer-me':
       // Sans prénom connu, on passe par « Qui êtes-vous ? » ; sinon le calendrier s'ouvre à son nom.
-      if (!auth.user && !getMe() && !ui.created) { ui.whoAsk = true; renderPoll(); window.scrollTo(0, 0); break; }
+      if (!getMe()) { ui.whoAsk = true; renderPoll(); window.scrollTo(0, 0); break; }
       openAnswer(null);
       if (getMe()) { ui.name = getMe(); ui.self = true; }
       renderPoll();
