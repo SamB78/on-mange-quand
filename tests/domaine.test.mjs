@@ -1,8 +1,9 @@
-// Tests du renvoi vers l'adresse publique (SITE_HOST) : workers.dev et www renvoient les pages, jamais l'API.
+// Tests du renvoi vers l'adresse publique (SITE_HOST) : workers.dev et www renvoient les pages, jamais l'API ;
+// sur workers.dev, l'API ne fait plus que lire (retiredWrite).
 // Lancer : npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalUrl } from '../src/worker.js';
+import { canonicalUrl, retiredWrite } from '../src/worker.js';
 
 const PROD = { SITE_HOST: 'dispos.day' };
 const TEST = { SITE_HOST: 'test.dispos.day' };
@@ -30,4 +31,19 @@ test('rien n’est renvoyé sur le domaine lui-même, en local, pour l’API ou 
 test('un autre domaine n’est pas renvoyé (la version de test ne renvoie pas vers la prod)', () => {
   assert.equal(canonicalUrl(get('https://test.dispos.day/'), PROD), null);
   assert.equal(canonicalUrl(get('https://exemple.fr/'), PROD), null);
+});
+
+test('sur workers.dev, les écritures sont refusées, les lectures (lien d’agenda) passent', () => {
+  const old = 'https://on-mange-quand.on-mange-quand.workers.dev';
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(retiredWrite(get(old + '/api/polls/abcdefghij', method), PROD), true);
+  assert.equal(retiredWrite(get('https://on-mange-quand-test.on-mange-quand.workers.dev/api/polls', 'POST'), TEST), true);
+  assert.equal(retiredWrite(get(old + '/api/agenda/xyz.ics'), PROD), false);
+  assert.equal(retiredWrite(get(old + '/api/polls/abcdefghij', 'HEAD'), PROD), false);
+});
+
+test('les écritures passent sur le domaine, sur www et en local', () => {
+  assert.equal(retiredWrite(get('https://dispos.day/api/polls', 'POST'), PROD), false);
+  assert.equal(retiredWrite(get('https://test.dispos.day/api/polls', 'POST'), TEST), false);
+  assert.equal(retiredWrite(get('https://www.dispos.day/api/polls', 'POST'), PROD), false);
+  assert.equal(retiredWrite(get('http://localhost:8787/api/polls', 'POST'), {}), false);
 });
