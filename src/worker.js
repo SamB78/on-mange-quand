@@ -488,9 +488,12 @@ async function handleFeed(request, env, url, parts) {
   });
 }
 
-// Limite de débit maison (table rate_hits) : écritures par minute et par adresse IP. Elle freine les scripts sans
+// Limite de débit maison (table rate_hits) : écritures par adresse IP, par minute et par heure. Elle freine les scripts sans
 // jamais gêner un groupe normal ; les lectures ne sont pas comptées. (La limite intégrée aux Workers ne bloquait rien.)
+// Devant elle, une règle de limite de débit de Cloudflare arrête les rafales sur /api/ avant même le serveur.
 export const RATE_LIMITS = { write: 60, create: 10 };
+// Par heure : arrête un script patient qui resterait juste sous la limite par minute toute la journée.
+export const RATE_LIMITS_HOUR = { write: 300, create: 30 };
 // Adresse comptée : l'IPv4 telle quelle ; en IPv6, le bloc /64, à l'intérieur duquel un appareil change d'adresse à volonté.
 export function ipKey(ip) {
   if (!ip) return 'inconnue';
@@ -501,30 +504,42 @@ export function ipKey(ip) {
   const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
   return groups.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':') + '::/64';
 }
-async function tooFast(env, bucket, request) {
-  const minute = Math.floor(Date.now() / 60000);
+// Renvoie le message de refus, ou null si la demande passe. Une demande refusée n'écrit rien en base : un script qui
+// insiste n'use pas le quota d'écritures de D1 (100 000 lignes par jour en offre gratuite).
+export async function tooFast(env, bucket, request, now = Date.now()) {
+  const minute = Math.floor(now / 60000);
+  const hour = minute - (minute % 60);
   const key = ipKey(request.headers.get('cf-connecting-ip'));
   try {
-    const ipHash = (await sha256Hex(`limite|${minute}|${key}`)).slice(0, 32); // jamais l'adresse elle-même
+    // Une ligne par minute ; l'empreinte change chaque heure, ce qui permet d'additionner les minutes de l'heure en cours.
+    const ipHash = (await sha256Hex(`limite|${hour}|${key}`)).slice(0, 32); // jamais l'adresse elle-même
+    const total = await env.DB.prepare(
+      'SELECT COALESCE(SUM(hits), 0) AS n FROM rate_hits WHERE bucket = ? AND ip_hash = ? AND minute >= ?'
+    ).bind(bucket, ipHash, hour).first();
+    if (total.n >= RATE_LIMITS_HOUR[bucket]) return TOO_MANY;
+    // Compte et vérifie en une seule requête : une fois la limite de la minute atteinte, la ligne n'est plus modifiée et
+    // rien n'est renvoyé.
     const row = await env.DB.prepare(
       `INSERT INTO rate_hits (bucket, ip_hash, minute, hits) VALUES (?, ?, ?, 1)
-       ON CONFLICT (bucket, ip_hash, minute) DO UPDATE SET hits = hits + 1
+       ON CONFLICT (bucket, ip_hash, minute) DO UPDATE SET hits = hits + 1 WHERE hits < ?
        RETURNING hits`
-    ).bind(bucket, ipHash, minute).first();
-    return row.hits > RATE_LIMITS[bucket];
+    ).bind(bucket, ipHash, minute, RATE_LIMITS[bucket]).first();
+    return row ? null : TOO_FAST;
   } catch (e) {
     console.error('Limite de débit indisponible', e);
-    return false; // compteur indisponible : on laisse passer plutôt que de bloquer tout le monde
+    return null; // compteur indisponible : on laisse passer plutôt que de bloquer tout le monde
   }
 }
 const TOO_FAST = 'Trop de demandes en peu de temps : patientez une minute, puis réessayez.';
+const TOO_MANY = 'Trop de demandes depuis votre connexion cette heure-ci : réessayez un peu plus tard.';
 
 async function handleApi(request, env, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'polls' | 'me' | 'agenda', ...]
   const method = request.method;
   if (method !== 'GET' && method !== 'HEAD') {
-    if (await tooFast(env, 'write', request)) throw new HttpError(429, TOO_FAST);
-    if (parts[1] === 'polls' && parts.length === 2 && await tooFast(env, 'create', request)) throw new HttpError(429, TOO_FAST);
+    const refused = await tooFast(env, 'write', request)
+      || (parts[1] === 'polls' && parts.length === 2 && await tooFast(env, 'create', request));
+    if (refused) throw new HttpError(429, refused);
   }
   if (parts[1] === 'me') return handleMe(request, env, url, parts);
   if (parts[1] === 'agenda') return handleFeed(request, env, url, parts);
@@ -722,8 +737,8 @@ async function handleApi(request, env, url) {
 // Toutes les adresses de l'app rendent la même page ; elle lit l'adresse et affiche la bonne vue.
 // Pour un sondage, on glisse son nom dans l'aperçu du lien (WhatsApp, iMessage…), sauf s'il est protégé par un code.
 // Une seule adresse publique (SITE_HOST, dans wrangler.jsonc) : les pages demandées sur workers.dev ou www y sont renvoyées,
-// chemin compris (les anciens liens /#<id> gardent leur fin, que le navigateur reporte). L'API répond partout, pour ne pas
-// casser un lien d'agenda déjà ajouté ni une page restée ouverte. En local, SITE_HOST est absent : rien n'est renvoyé.
+// chemin compris (les anciens liens /#<id> gardent leur fin, que le navigateur reporte). L'API répond partout en lecture,
+// pour ne pas casser un lien d'agenda déjà ajouté. En local, SITE_HOST est absent : rien n'est renvoyé.
 export function canonicalUrl(request, env) {
   if (!env.SITE_HOST || (request.method !== 'GET' && request.method !== 'HEAD')) return null;
   const url = new URL(request.url);
@@ -732,10 +747,20 @@ export function canonicalUrl(request, env) {
   return `https://${env.SITE_HOST}${url.pathname}${url.search}`;
 }
 
+// Sur workers.dev, les écritures sont refusées : les règles de pare-feu de Cloudflare (limite de débit) ne s'appliquent
+// qu'au domaine, et un script pourrait passer par là pour les contourner. Les pages y sont renvoyées vers SITE_HOST.
+export function retiredWrite(request, env) {
+  if (!env.SITE_HOST || request.method === 'GET' || request.method === 'HEAD') return false;
+  return new URL(request.url).hostname.endsWith('.workers.dev');
+}
+
 async function route(request, env) {
   const url = new URL(request.url);
   const canonical = canonicalUrl(request, env);
   if (canonical) return Response.redirect(canonical, 301);
+  if (retiredWrite(request, env)) {
+    return json({ error: `Cette adresse n'est plus utilisée : continuez sur https://${env.SITE_HOST}.` }, 403);
+  }
   if (url.pathname.startsWith('/api/')) {
     try {
       return await handleApi(request, env, url);

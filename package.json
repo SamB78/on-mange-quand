@@ -2,7 +2,7 @@
   "name": "on-mange-quand",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev --var FIREBASE_PROJECT_ID:demo-omq --var AUTH_EMULATOR_LOCAL_ONLY:1",
+    "dev": "wrangler dev --var FIREBASE_PROJECT_ID:demo-omq --var AUTH_EMULATOR_LOCAL_ONLY:1 --local-upstream localhost:8787",
     "auth:local": "firebase emulators:start --only auth --project demo-omq",
     "test": "node --test tests/*.test.mjs",
     "deploy": "node scripts/garde-fou-prod.mjs && wrangler deploy",
