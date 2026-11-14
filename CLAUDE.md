@@ -31,7 +31,7 @@ Le fonctionnement pour l'utilisateur est décrit dans le README.
 
 ## Tester en local
 
-`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm test` teste la vérification des jetons, les règles partagées et les en-têtes de sécurité. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
+`npm run db:local`, puis `npm run auth:local` (émulateur de connexion Firebase, port 9099) et `npm run dev` (http://localhost:8787, base locale dans `.wrangler/`). `npm run dev` passe `--local-upstream localhost:8787` : sans lui, à cause des `routes` du domaine, le serveur local se croit sur `dispos.day` et refuse les jetons de l'émulateur. `npm test` teste la vérification des jetons, les règles partagées et les en-têtes de sécurité. Toujours tester en local avant de mettre à jour la version de test. Ne jamais créer de compte de test sur le vrai projet Firebase : en local, utiliser l'émulateur. L'émulateur oublie ses comptes à chaque redémarrage : la page se déconnecte alors toute seule (« Votre session a expiré »), il suffit de recréer un compte.
 
 ## Code
 
