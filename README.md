@@ -5,7 +5,7 @@ Sondage de dispos pour fixer la date d'un dîner, d'une soirée jeux ou d'un wee
 - **Prod : https://dispos.day**
 - **Test : https://test.dispos.day** (sa propre base, pour essayer les nouveautés)
 
-Les anciennes adresses `on-mange-quand.on-mange-quand.workers.dev` (prod) et `on-mange-quand-test.on-mange-quand.workers.dev` (test), ainsi que `www.dispos.day`, renvoient les pages vers ces adresses ; l'API y répond encore, pour les liens d'agenda déjà ajoutés.
+Les anciennes adresses `on-mange-quand.on-mange-quand.workers.dev` (prod) et `on-mange-quand-test.on-mange-quand.workers.dev` (test), ainsi que `www.dispos.day`, renvoient les pages vers ces adresses ; l'API y répond encore en lecture, pour les liens d'agenda déjà ajoutés, mais n'y accepte plus d'écriture.
 
 ## Comment ça marche
 
