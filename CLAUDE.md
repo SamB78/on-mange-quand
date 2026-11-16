@@ -73,6 +73,7 @@ Droits (fonctions `accessOf` et `canEditAnswer` du serveur) :
 - Sondage créé en étant connecté : il a un organisateur (`owner_uid`), qui seul choisit la date, modifie, clôture, supprime ou pose un code.
 - Sondage créé sans compte (pas d'`owner_uid`) : toute personne qui a le lien répond, choisit la date, modifie, clôture, rouvre ou supprime (`acc.manage`, renvoyé à la page en `canManage`). Toute personne connectée peut en devenir l'organisateur (`POST /api/polls/:id/claim`, seulement s'il n'en a pas encore ; la page demande confirmation).
 - Une réponse donnée en étant connecté (`answers.uid`) n'est modifiable que par son auteur ou par l'organisateur ; une réponse sans compte, par tous.
+- Qui gère le sondage (`acc.manage`) et supprime ou renomme une réponse retire ou renomme aussi l'invité attendu du même prénom dans `g` et `r` (`guestsAfter` de `shared.js`) : sinon il resterait affiché « pas encore répondu », sans réponse à supprimer. Les autres ne touchent pas aux réglages.
 - Sondage clôturé ou date limite passée : seul l'organisateur modifie encore les réponses. Sans organisateur, personne : il faut rouvrir ou repousser la date limite.
 - La page envoie le jeton Firebase en `Authorization: Bearer`.
 

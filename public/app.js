@@ -2152,8 +2152,10 @@ function nameSheetHTML() {
   const recap = !y && !m
     ? 'Aucun créneau coché&nbsp;: le groupe saura qu’aucune date ne vous va.'
     : `${y} dispo${m ? `, ${m} si besoin` : ''}.${ui.editing ? '' : ' Le groupe verra votre réponse tout de suite.'}`;
+  // Qui gère le sondage retire aussi la personne des invités attendus (guestsAfter, côté serveur).
+  const guest = st.canManage && (st.g || []).some((x) => norm(x) === norm(ui.editing || ''));
   const del = !ui.editing ? '' : ui.delAsk
-    ? `<div class="confirm"><span>Supprimer la réponse de ${esc(ui.editing)}&nbsp;?</span><button type="button" class="btn sm danger" data-act="del-confirm">Supprimer</button><button type="button" class="btn sm" data-act="del-cancel">Annuler</button></div>`
+    ? `<div class="confirm"><span>Supprimer la réponse de ${esc(ui.editing)}&nbsp;?${guest ? ` ${esc(ui.editing)} ne sera plus dans les invités attendus.` : ''}</span><button type="button" class="btn sm danger" data-act="del-confirm">Supprimer</button><button type="button" class="btn sm" data-act="del-cancel">Annuler</button></div>`
     : `<button type="button" class="linkbtn danger" data-act="del-ask">Supprimer la réponse de ${esc(ui.editing)}</button>`;
   const foot = ui.editing ? '' : auth.user && !poll.example
     ? 'Réponse liée à votre compte&nbsp;: seuls vous et l’organisateur pourrez la modifier.'

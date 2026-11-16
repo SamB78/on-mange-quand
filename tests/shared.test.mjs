@@ -2,7 +2,7 @@
 // Lancer : npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSlots, slotsKey, slotTimes, slotEnd, slotId, parseYmd, ymd, weekday, isLate, norm } from '../public/shared.js';
+import { buildSlots, slotsKey, slotTimes, slotEnd, slotId, parseYmd, ymd, weekday, isLate, norm, guestsAfter } from '../public/shared.js';
 
 const SOIR = 16, MIDI = 4;
 
@@ -89,4 +89,19 @@ test('la date limite se juge à l’heure de Paris, jour limite compris', () => 
 
 test('norm ignore accents, majuscules et espaces en trop', () => {
   assert.equal(norm('  Léa   Dupont '), 'lea dupont');
+});
+
+test('un invité attendu suit sa réponse supprimée ou renommée', () => {
+  const cfg = { t: 'Dîner', g: ['Matthieu et Doriane', 'Julie', 'Léa'], r: ['Matthieu et Doriane', 'Léa'] };
+  // Supprimée : retiré des invités et des indispensables (prénom reconnu sans majuscules ni accents).
+  assert.deepEqual(guestsAfter(cfg, 'matthieu ET doriane'), { t: 'Dîner', g: ['Julie', 'Léa'], r: ['Léa'] });
+  // Renommée : même place, toujours indispensable.
+  assert.deepEqual(guestsAfter(cfg, 'Matthieu et Doriane', 'Matthieu'), { t: 'Dîner', g: ['Matthieu', 'Julie', 'Léa'], r: ['Matthieu', 'Léa'] });
+  // Renommée en un prénom déjà attendu : l'ancien disparaît, le nouveau devient indispensable.
+  assert.deepEqual(guestsAfter(cfg, 'Matthieu et Doriane', 'julie'), { t: 'Dîner', g: ['Julie', 'Léa'], r: ['Julie', 'Léa'] });
+  // Dernier invité retiré : plus de champs g ni r ; prénom qui n'est pas attendu : rien ne change.
+  assert.deepEqual(guestsAfter({ t: 'Dîner', g: ['Léa'], r: ['Lea'] }, 'Léa'), { t: 'Dîner' });
+  assert.equal(guestsAfter(cfg, 'Hugo'), null);
+  assert.equal(guestsAfter({ t: 'Dîner' }, 'Léa'), null);
+  assert.deepEqual(cfg.g, ['Matthieu et Doriane', 'Julie', 'Léa']); // les réglages d'origine ne bougent pas
 });
