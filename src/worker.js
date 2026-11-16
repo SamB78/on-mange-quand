@@ -4,7 +4,7 @@
 //   GET    /api/polls/:id                 lire un sondage et ses réponses
 //   POST   /api/polls/:id/pin             donner le code d'accès { pin } ; le bon code pose un cookie pour ce sondage
 //   PUT    /api/polls/:id/answers         ajouter ou modifier une réponse { name, ans, note?, prev?, slotsKey? }
-//   DELETE /api/polls/:id/answers         supprimer une réponse { name }
+//   DELETE /api/polls/:id/answers         supprimer une réponse { name } (qui gère le sondage : aussi des invités attendus)
 //   PUT    /api/polls/:id/final           choisir le créneau final { i } (-1 pour annuler)
 //   PUT    /api/polls/:id                 modifier les réglages (qui gère le sondage)
 //   PUT    /api/polls/:id/closed          clôturer ou rouvrir { closed } (qui gère le sondage)
@@ -29,7 +29,7 @@ import {
   DAY_MS, MAX_DAYS, MAX_SLOTS, MAX_PEOPLE, MAX_GUESTS, MAX_NOTE, MOMENT_HOURS, ICONS, SITE_NAME, FEED_NAME, DEFAULT_TITLE,
   TRASH_DAYS, KEEP_MONTHS,
   MAX_RANGES, STAY_MARGIN,
-  norm, weekday, parseYmd, ymd, buildSlots, slotsKey, slotTimes, slotEnd, slotId, isLate,
+  norm, guestsAfter, weekday, parseYmd, ymd, buildSlots, slotsKey, slotTimes, slotEnd, slotId, isLate,
 } from '../public/shared.js';
 
 const MAX_BODY = 20000;
@@ -666,8 +666,12 @@ async function handleApi(request, env, url) {
     }
     // Une réponse garde son auteur ; une nouvelle réponse est liée au compte connecté, s'il y en a un.
     const author = previous ? previous.uid : target ? target.uid : user ? user.uid : null;
+    // Qui gère le sondage renomme aussi l'invité attendu (guestsAfter) : l'ancien prénom ne reste pas « pas encore répondu ».
+    const guests = previous && acc.manage ? guestsAfter(cfg, cleanText(body.prev, 40), name) : null;
+    const config = guests && JSON.stringify(guests);
     const statements = [];
     if (previous) statements.push(env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, prevKey));
+    if (config) statements.push(env.DB.prepare('UPDATE polls SET config = ? WHERE id = ?').bind(config, id));
     statements.push(
       env.DB.prepare(
         `INSERT INTO answers (poll_id, name_key, name, ans, note, uid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -677,19 +681,27 @@ async function handleApi(request, env, url) {
       touch
     );
     await env.DB.batch(statements);
-    return reply(row);
+    return reply(config ? { ...row, config } : row);
   }
 
   if (action === 'answers' && method === 'DELETE') {
     notFrozen();
-    const key = norm(cleanText((await readBody(request)).name, 40));
+    const name = cleanText((await readBody(request)).name, 40);
+    const key = norm(name);
     if (!key) throw new HttpError(400, 'Réponse à supprimer introuvable.');
     const target = await env.DB.prepare('SELECT uid FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key).first();
     if (target && !canEditAnswer(row, cfg, acc, target)) {
       throw new HttpError(403, 'Seule la personne qui a donné cette réponse, ou l’organisateur, peut la supprimer.');
     }
-    await env.DB.batch([env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key), touch]);
-    return reply(row);
+    // Qui gère le sondage retire aussi la personne des invités attendus, sinon elle reviendrait en « pas encore répondu ».
+    const guests = acc.manage ? guestsAfter(cfg, name) : null;
+    const config = guests && JSON.stringify(guests);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM answers WHERE poll_id = ? AND name_key = ?').bind(id, key),
+      ...(config ? [env.DB.prepare('UPDATE polls SET config = ? WHERE id = ?').bind(config, id)] : []),
+      touch,
+    ]);
+    return reply(config ? { ...row, config } : row);
   }
 
   if (action === 'final' && method === 'PUT') {

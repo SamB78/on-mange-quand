@@ -35,6 +35,26 @@ export const ICONS = [
 export const norm = (s) =>
   String(s).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
 
+// Un invité attendu (g, et r s'il est indispensable) suit sa réponse : retiré quand elle est supprimée, renommé quand
+// elle change de prénom (retiré si le nouveau prénom est déjà attendu). Sinon il resterait affiché comme « pas encore répondu »,
+// sans réponse à supprimer. Renvoie une copie des réglages, ou null si le prénom n'est pas parmi les invités attendus.
+export function guestsAfter(cfg, name, rename = '') {
+  const key = norm(name), guests = cfg.g || [];
+  if (!guests.some((x) => norm(x) === key)) return null;
+  const must = new Set((cfg.r || []).map(norm));
+  if (rename && must.has(key)) must.add(norm(rename));
+  const g = rename && !guests.some((x) => norm(x) === norm(rename))
+    ? guests.map((x) => (norm(x) === key ? rename : x))
+    : guests.filter((x) => norm(x) !== key);
+  const r = g.filter((x) => must.has(norm(x)));
+  const out = { ...cfg };
+  delete out.g;
+  delete out.r;
+  if (g.length) out.g = g;
+  if (r.length) out.r = r;
+  return out;
+}
+
 // Les jours sont comptés en jours entiers depuis 1970 (UTC), sans heure : pas de surprise aux changements d'heure.
 export const weekday = (d) => (new Date(d * DAY_MS).getUTCDay() + 6) % 7; // 0 = lundi
 
